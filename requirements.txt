@@ -9,3 +9,4 @@ gspread
 google-auth
 xlsxwriter
 imap-tools
+streamlit-autorefresh
