@@ -1,0 +1,13 @@
+# Environment variables (API keys, etc.)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Data files (optional, but recommended to keep data local)
+articles_data.json
+preferences.json
+
+# Credentials
+google_creds.json
