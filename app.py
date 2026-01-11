@@ -738,7 +738,14 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                 st.error("Please enter a URL.")
             else:
                 target_mode = "URL"
-                target_content = url_input
+                target_content = url_input.strip()
+                
+                # Check for duplicate
+                existing_arts = dm.get_all_articles()
+                if any(a.get("url") == target_content for a in existing_arts):
+                    st.warning(f"This URL has already been processed: {target_content}")
+                    target_mode = None
+                    target_content = None
         elif analyze_text:
             if not text_input:
                 st.error("Please paste text.")
