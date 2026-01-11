@@ -238,30 +238,53 @@ def render_brand_header():
 def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
     try:
         if not email_user or not email_pass:
+            if force:
+                st.warning("Please enter Email User and Password in the sidebar settings.")
             return
+
         now_ts = datetime.now().timestamp()
         last_ts = float(st.session_state.get("last_email_check_ts", 0))
+        
+        # If not forced, enforce 5-minute cooldown
         if not force and now_ts - last_ts < 300:
             return
+            
         st.session_state["last_email_check_ts"] = now_ts
-        with st.spinner("Checking email..."):
+        
+        with st.spinner("Checking email for new articles..."):
             em = EmailManager(email_user, email_pass)
             prefs = dm.get_preferences()
             blocked = prefs.get("blocked_domains", [])
+            
             links = em.fetch_new_links(blocked_domains=blocked)
+            
             if isinstance(links, str) and links.startswith("Error"):
-                st.session_state["last_activity_log"] = (st.session_state.get("last_activity_log", "") + f"[{datetime.now().strftime('%H:%M:%S')}] Auto-Email Error: {links}\n")
+                err_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Email Error: {links}"
+                st.session_state["last_activity_log"] = (st.session_state.get("last_activity_log", "") + err_msg + "\n")
+                if force:
+                    st.error(f"Email Check Failed: {links}")
                 return
+
             if not links:
+                if force:
+                    st.info("No new valid links found in recent emails.")
                 return
+
             articles = dm.get_all_articles()
             existing_urls = {a.get("url") for a in articles if a.get("url")}
             new_links = [l for l in links if l not in existing_urls]
+
             if not new_links:
+                if force:
+                    st.info("Found links, but they are already in the database.")
                 return
+
+            # Process new links
             progress_bar = st.progress(0)
             added_count = 0
+            
             for i, url in enumerate(new_links):
+                # ... (same logic as before) ...
                 new_art = {
                     "url": url,
                     "status": "In Process",
@@ -269,6 +292,7 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
                     "added_at": datetime.now().isoformat()
                 }
                 saved_art = dm.save_article(new_art)
+                
                 txt = scrape_article(url)
                 if isinstance(txt, str) and txt.startswith("Error"):
                     dm.update_article(saved_art["id"], {
@@ -303,12 +327,18 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
                                 dm.update_article(saved_art["id"], {"last_error": "JSON Parse Error"})
                     else:
                         dm.update_article(saved_art["id"], {"last_error": "No API Key"})
+                
                 added_count += 1
                 progress_bar.progress((i + 1) / len(new_links))
-            st.success(f"Auto-added {added_count} new article(s).")
+            
+            st.success(f"Successfully added {added_count} new article(s) from email.")
             st.rerun()
-    except Exception:
-        pass
+
+    except Exception as e:
+        err_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Exception during email check: {str(e)}"
+        st.session_state["last_activity_log"] = (st.session_state.get("last_activity_log", "") + err_msg + "\n")
+        if force:
+            st.error(f"An error occurred: {str(e)}")
 
 def main():
     # --- Sidebar ---
