@@ -261,8 +261,14 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
             if isinstance(links, str) and links.startswith("Error"):
                 err_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Email Error: {links}"
                 st.session_state["last_activity_log"] = (st.session_state.get("last_activity_log", "") + err_msg + "\n")
+                
                 if force:
-                    st.error(f"Email Check Failed: {links}")
+                    if "Application-specific password required" in links:
+                        st.error("Authentication Failed: You must use a Google App Password, not your regular password.")
+                        st.markdown("[Click here to generate an App Password](https://myaccount.google.com/apppasswords)")
+                        st.info("Go to Google Account > Security > 2-Step Verification > App Passwords.")
+                    else:
+                        st.error(f"Email Check Failed: {links}")
                 return
 
             if not links:
@@ -379,6 +385,7 @@ def main():
         
         email_user = st.text_input("Gmail Address", value=env_email_user)
         email_pass = st.text_input("App Password", type="password", value=env_email_pass, help="Generate an App Password in your Google Account settings.")
+        st.caption("[Get App Password](https://myaccount.google.com/apppasswords) (Required for 2FA)")
         
         if st.button("Save Email Config"):
             set_key(".env", "EMAIL_USER", email_user)
