@@ -245,8 +245,8 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
         now_ts = datetime.now().timestamp()
         last_ts = float(st.session_state.get("last_email_check_ts", 0))
         
-        # If not forced, enforce 5-minute cooldown
-        if not force and now_ts - last_ts < 300:
+        # If not forced, enforce 1-minute cooldown
+        if not force and now_ts - last_ts < 60:
             return
             
         st.session_state["last_email_check_ts"] = now_ts
@@ -397,7 +397,7 @@ def main():
 
         try:
             from streamlit import st_autorefresh
-            st_autorefresh(interval=300000, key="email_poll")
+            st_autorefresh(interval=60000, key="email_poll")
         except Exception:
             pass
         maybe_auto_check_email(email_user, email_pass, api_key)
