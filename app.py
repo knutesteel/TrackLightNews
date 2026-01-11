@@ -383,8 +383,10 @@ def main():
         env_email_user = os.getenv("EMAIL_USER", "articleanalyzer@gmail.com")
         env_email_pass = os.getenv("EMAIL_PASS", "")
         
-        email_user = st.text_input("Gmail Address", value=env_email_user)
-        email_pass = st.text_input("App Password", type="password", value=env_email_pass, help="Generate an App Password in your Google Account settings.")
+        email_user = st.text_input("Gmail Address", value=env_email_user).strip()
+        # Remove all spaces from App Password as users often copy them from Google's display
+        email_pass_input = st.text_input("App Password", type="password", value=env_email_pass, help="Generate an App Password in your Google Account settings.")
+        email_pass = email_pass_input.replace(" ", "").strip()
         st.caption("[Get App Password](https://myaccount.google.com/apppasswords) (Required for 2FA)")
         
         if st.button("Save Email Config"):

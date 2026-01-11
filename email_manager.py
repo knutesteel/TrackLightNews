@@ -11,8 +11,9 @@ from email.mime.multipart import MIMEMultipart
 
 class EmailManager:
     def __init__(self, username, password):
-        self.username = username
-        self.password = password
+        self.username = username.strip() if username else ""
+        # Remove all spaces from password (common issue with App Passwords)
+        self.password = password.replace(" ", "").strip() if password else ""
         self.imap_server = "imap.gmail.com"
         self.smtp_server = "smtp.gmail.com"
         self.smtp_port = 465
