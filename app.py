@@ -235,6 +235,24 @@ def render_brand_header():
         # Fallback title
         st.title("Tracklight.ai Article Analyzer")
 
+def get_config(key, default=""):
+    """Get configuration from env vars or streamlit secrets"""
+    # 1. Try environment variable (os.getenv)
+    val = os.getenv(key)
+    if val:
+        return val
+    
+    # 2. Try Streamlit Secrets
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+        
+    return default
+
 def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
     try:
         if not email_user or not email_pass:
@@ -356,7 +374,7 @@ def main():
         # st.markdown("---")
 
         # Check for existing key in environment
-        env_api_key = os.getenv("OPENAI_API_KEY", "")
+        env_api_key = get_config("OPENAI_API_KEY", "")
         
         api_key = st.text_input("Enter OpenAI API Key", type="password", value=env_api_key)
         
@@ -380,8 +398,8 @@ def main():
         st.subheader("Email Integration")
         st.caption("Auto-load URLs from Gmail.")
         
-        env_email_user = os.getenv("EMAIL_USER", "articleanalyzer@gmail.com")
-        env_email_pass = os.getenv("EMAIL_PASS", "")
+        env_email_user = get_config("EMAIL_USER", "articleanalyzer@gmail.com")
+        env_email_pass = get_config("EMAIL_PASS", "")
         
         email_user = st.text_input("Gmail Address", value=env_email_user).strip()
         # Remove all spaces from App Password as users often copy them from Google's display
@@ -407,7 +425,7 @@ def main():
         st.subheader("Google Sheets Integration")
         st.caption("Auto-load URLs from a Google Sheet.")
         
-        sheet_name = st.text_input("Google Sheet Name / ID / URL", value=os.getenv("GOOGLE_SHEET_NAME", ""), help="You can enter the exact Name, the Sheet ID, or the full URL.")
+        sheet_name = st.text_input("Google Sheet Name / ID / URL", value=get_config("GOOGLE_SHEET_NAME", ""), help="You can enter the exact Name, the Sheet ID, or the full URL.")
         creds_input = st.text_area("Service Account JSON", placeholder="{ ... }", help="Paste the content of your service_account.json here.")
         
         saved_creds_file = "google_creds.json"
