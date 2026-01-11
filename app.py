@@ -1172,13 +1172,12 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     if current_status not in status_opts:
                         status_opts.append(current_status)
                     
-                    def on_stat_change():
-                        new_s = st.session_state[f"status_sel_{article['id']}"]
-                        article["status"] = new_s
-                        dm.update_article(article["id"], {"status": new_s})
-                        # st.toast(f"Status updated: {new_s}")
-
-                    st.selectbox("Status", options=status_opts, index=status_opts.index(current_status), key=f"status_sel_{article['id']}", on_change=on_stat_change)
+                    new_status = st.selectbox(
+                        "Status", 
+                        options=status_opts, 
+                        index=status_opts.index(current_status), 
+                        key=f"status_sel_{article['id']}"
+                    )
 
                 with sp_col2:
                     current_prio = article.get("priority", "Medium")
@@ -1186,13 +1185,19 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     if current_prio not in prio_opts:
                         prio_opts.append(current_prio)
 
-                    def on_prio_change():
-                        new_p = st.session_state[f"prio_sel_{article['id']}"]
-                        article["priority"] = new_p
-                        dm.update_article(article["id"], {"priority": new_p})
-                        # st.toast(f"Priority updated: {new_p}")
+                    new_prio = st.selectbox(
+                        "Priority", 
+                        options=prio_opts, 
+                        index=prio_opts.index(current_prio), 
+                        key=f"prio_sel_{article['id']}"
+                    )
 
-                    st.selectbox("Priority", options=prio_opts, index=prio_opts.index(current_prio), key=f"prio_sel_{article['id']}", on_change=on_prio_change)
+                if st.button("Update Status & Priority", key=f"btn_update_sp_{article['id']}"):
+                    article["status"] = new_status
+                    article["priority"] = new_prio
+                    dm.update_article(article["id"], {"status": new_status, "priority": new_prio})
+                    st.success(f"Updated: {new_status} / {new_prio}")
+                    st.rerun()
 
                 
                 # Removed old text area block since it's now in popover
