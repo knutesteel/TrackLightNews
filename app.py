@@ -235,13 +235,13 @@ def render_brand_header():
         # Fallback title
         st.title("Tracklight.ai Article Analyzer")
 
-def maybe_auto_check_email(email_user, email_pass, api_key):
+def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
     try:
         if not email_user or not email_pass:
             return
         now_ts = datetime.now().timestamp()
         last_ts = float(st.session_state.get("last_email_check_ts", 0))
-        if now_ts - last_ts < 300:
+        if not force and now_ts - last_ts < 300:
             return
         st.session_state["last_email_check_ts"] = now_ts
         with st.spinner("Checking email..."):
@@ -455,7 +455,7 @@ def main():
         global_summary_page(api_key)
     else:
         # Main Dashboard
-        dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds)
+        dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email_user, email_pass)
 
 def global_summary_page(api_key):
     st.title("🌎 Global Analysis & Grouping")
@@ -535,10 +535,13 @@ def logs_page():
     else:
         st.info("No logs available.")
 
-def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds):
-    col_title, col_global = st.columns([4, 1])
+def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email_user, email_pass):
+    col_title, col_check, col_global = st.columns([2.5, 1, 1])
     with col_title:
         st.title("🔍 Tracklight.ai Article Analyzer")
+    with col_check:
+        if st.button("📧 Check Email Now"):
+             maybe_auto_check_email(email_user, email_pass, api_key, force=True)
     with col_global:
         if st.button("🌎 Global Analysis"):
             st.session_state["is_global_summary"] = True
@@ -1158,6 +1161,38 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds):
                     on_change=update_notes,
                     placeholder="Add notes here (auto-saved)..."
                 )
+
+                # --- Status & Priority ---
+                st.markdown("#### Status & Priority")
+                sp_col1, sp_col2 = st.columns(2)
+                
+                with sp_col1:
+                    current_status = article.get("status", "Not Started")
+                    status_opts = ["Not Started", "In Process", "Qualified", "Error", "Completed", "Archived"]
+                    if current_status not in status_opts:
+                        status_opts.append(current_status)
+                    
+                    def on_stat_change():
+                        new_s = st.session_state[f"status_sel_{article['id']}"]
+                        article["status"] = new_s
+                        dm.update_article(article["id"], {"status": new_s})
+                        # st.toast(f"Status updated: {new_s}")
+
+                    st.selectbox("Status", options=status_opts, index=status_opts.index(current_status), key=f"status_sel_{article['id']}", on_change=on_stat_change)
+
+                with sp_col2:
+                    current_prio = article.get("priority", "Medium")
+                    prio_opts = ["High", "Medium", "Low"]
+                    if current_prio not in prio_opts:
+                        prio_opts.append(current_prio)
+
+                    def on_prio_change():
+                        new_p = st.session_state[f"prio_sel_{article['id']}"]
+                        article["priority"] = new_p
+                        dm.update_article(article["id"], {"priority": new_p})
+                        # st.toast(f"Priority updated: {new_p}")
+
+                    st.selectbox("Priority", options=prio_opts, index=prio_opts.index(current_prio), key=f"prio_sel_{article['id']}", on_change=on_prio_change)
 
                 
                 # Removed old text area block since it's now in popover
