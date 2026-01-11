@@ -316,7 +316,7 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
                                 data = json.loads(res)
                                 data = normalize_analysis(data)
                                 updates = {
-                                    "status": "Qualified",
+                                    "status": "Not Started",
                                     "article_title": data.get("article_title", "Unknown Title"),
                                     "date": data.get("date"),
                                     "date_verification": data.get("date_verification"),
@@ -985,11 +985,14 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
 
     else:
         # --- DETAILS VIEW ---
-        # Scroll to top
+        # Scroll to top - Force scroll to top when details view loads
+        import streamlit.components.v1 as components
         components.html(
             """
             <script>
-                window.parent.document.querySelector('section.main').scrollTo(0, 0);
+                window.scrollTo(0, 0);
+                var main = window.parent.document.querySelector('section.main');
+                if (main) { main.scrollTo(0, 0); }
             </script>
             """,
             height=0
