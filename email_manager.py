@@ -154,7 +154,7 @@ class EmailManager:
              # Remove trailing chars that might be part of sentence
              url = url.rstrip(').,;\'"')
              unwrapped = self._unwrap_url(url)
-             if self._is_valid_article_link(unwrapped):
+             if self._is_valid_article_link(unwrapped, blocked_domains):
                  found_links.add(unwrapped)
                  
         return found_links
@@ -190,6 +190,7 @@ class EmailManager:
             "apollo.io", "click.apollo.io", "track.apollo.io",
             "outlook.office.com", "w3.org", "bookwithme", "yutori.com",
             "resend-links.com", "chromewebstore.google.com",
+            "myaccount.google.com", "lh3.googleusercontent.com",
             "unsubscribe", "preferences", "manage"
         ]
         

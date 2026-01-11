@@ -798,9 +798,12 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             df = pd.DataFrame(articles)
             
             # --- Filters & Sorting Controls ---
-            status_options = ["Not Started", "In Process", "Qualified", "Disqualified"]
-            default_status = st.session_state.get("status_filter", ["Not Started", "In Process", "Qualified"])
-            status_filter = st.multiselect("Filter by Status", status_options, default_status)
+            status_options = ["Not Started", "In Process", "Qualified", "Disqualified", "Error", "Completed", "Archived"]
+            # Default to ALL statuses (empty list in multiselect usually means nothing selected, but here we want to show all if nothing is filtered)
+            # Or better: pre-select all relevant ones. User asked to "remove all filters for initial page load".
+            # So we will default to ALL options.
+            default_status = status_options 
+            status_filter = st.multiselect("Filter by Status", status_options, default=default_status)
             st.session_state["status_filter"] = status_filter
 
             col_sort1, col_sort2 = st.columns([2, 1])
