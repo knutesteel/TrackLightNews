@@ -40,26 +40,40 @@ class EmailManager:
         try:
             mail = imaplib.IMAP4_SSL(self.imap_server)
             mail.login(self.username, self.password)
+            
+            # Ensure "Processed" folder exists
+            processed_folder = "Processed"
+            status, folders = mail.list()
+            folder_exists = False
+            if status == "OK":
+                for f in folders:
+                    if f'"{processed_folder}"'.encode() in f or f' {processed_folder}'.encode() in f:
+                        folder_exists = True
+                        break
+            
+            if not folder_exists:
+                mail.create(processed_folder)
+
             # Force INBOX only per user environment
             if not self._safe_select(mail, "INBOX"):
                 mail.close()
                 mail.logout()
                 return []
-            # Try UNSEEN first
+            
+            # Only search for UNSEEN (unread) emails
             status, messages = mail.search(None, "(UNSEEN)")
             email_ids = []
             if status == "OK":
                 email_ids = messages[0].split()
-            # Fallback: scan last 50 messages if UNSEEN empty
-            if not email_ids:
-                status, messages = mail.search(None, "ALL")
-                if status == "OK":
-                    all_ids = messages[0].split()
-                    email_ids = all_ids[-50:] if len(all_ids) > 50 else all_ids
+            
             self.last_scanned_count = len(email_ids)
+            
             for email_id in email_ids:
-                res, msg = mail.fetch(email_id, "(RFC822)")
-                for response in msg:
+                # Fetch headers first to verify
+                res, msg_data = mail.fetch(email_id, "(RFC822)")
+                msg_content = None
+                
+                for response in msg_data:
                     if isinstance(response, tuple):
                         msg_obj = email.message_from_bytes(response[1])
                         content = ""
@@ -87,8 +101,22 @@ class EmailManager:
                                     content += body
                             except:
                                 pass
+                        
                         found = self._extract_links(content, blocked_domains)
                         links.update(found)
+                
+                # Mark as Read (Seen) and Move to Processed
+                # Adding \Seen flag is implicit with fetch, but we can be explicit
+                mail.store(email_id, '+FLAGS', '\\Seen')
+                
+                # Move to Processed folder
+                result = mail.copy(email_id, processed_folder)
+                if result[0] == 'OK':
+                    mail.store(email_id, '+FLAGS', '\\Deleted')
+            
+            # Expunge deleted messages (remove them from Inbox)
+            mail.expunge()
+            
             mail.close()
             mail.logout()
         except Exception as e:
@@ -220,7 +248,9 @@ class EmailManager:
         
         # Check for unsubscribe keywords in the URL path/query
         lower_url = url.lower()
-        if "unsubscribe" in lower_url or "optout" in lower_url or "manage-preferences" in lower_url or "preferences" in lower_url or "meetingtype" in lower_url:
+        if lower_url.startswith("https://scouts.yutori.com/upgrade"):
+            return False
+        if "unsubscribe" in lower_url or "optout" in lower_url or "manage-preferences" in lower_url or "preferences" in lower_url or "meetingtype" in lower_url or "favicon" in lower_url:
             return False
             
         # Basic extension check

@@ -253,6 +253,16 @@ def get_config(key, default=""):
         
     return default
 
+def mark_url_deleted(url):
+    if not url:
+        return
+    prefs = dm.get_preferences()
+    deleted = prefs.get("deleted_urls", [])
+    if url not in deleted:
+        deleted.append(url)
+        prefs["deleted_urls"] = deleted
+        dm.save_preferences(prefs)
+
 def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
     try:
         if not email_user or not email_pass:
@@ -273,6 +283,7 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
             em = EmailManager(email_user, email_pass)
             prefs = dm.get_preferences()
             blocked = prefs.get("blocked_domains", [])
+            deleted_urls = set(prefs.get("deleted_urls", []))
             
             links = em.fetch_new_links(blocked_domains=blocked)
             
@@ -296,7 +307,7 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
 
             articles = dm.get_all_articles()
             existing_urls = {a.get("url") for a in articles if a.get("url")}
-            new_links = [l for l in links if l not in existing_urls]
+            new_links = [l for l in links if l not in existing_urls and l not in deleted_urls]
 
             if not new_links:
                 if force:
@@ -308,51 +319,75 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
             added_count = 0
             
             for i, url in enumerate(new_links):
-                # ... (same logic as before) ...
+                article_start = datetime.now()
+                if "favicon" in url.lower():
+                    continue
                 new_art = {
                     "url": url,
                     "status": "In Process",
                     "article_title": "Analyzing...",
-                    "added_at": datetime.now().isoformat()
+                    "added_at": datetime.now().isoformat(),
+                    "source": "email"
                 }
                 saved_art = dm.save_article(new_art)
-                
+                added_ok = False
+
                 txt = scrape_article(url)
+                elapsed = (datetime.now() - article_start).total_seconds()
+                if elapsed > 60:
+                    dm.delete_article(saved_art["id"])
+                    if force:
+                        st.warning(f"Timed out while processing: {url}")
+                    progress_bar.progress((i + 1) / len(new_links))
+                    continue
+
                 if isinstance(txt, str) and txt.startswith("Error"):
-                    dm.update_article(saved_art["id"], {
-                        "last_error": txt, 
-                        "status": "Error",
-                        "tl_dr": "Unknown - Bad Link?"
-                    })
+                    dm.update_article(saved_art["id"], {"last_error": txt, "status": "Error"})
                 else:
                     if api_key:
                         res = analyze_with_chatgpt(txt, api_key)
+                        elapsed = (datetime.now() - article_start).total_seconds()
+                        if elapsed > 60:
+                            dm.delete_article(saved_art["id"])
+                            if force:
+                                st.warning(f"Timed out while processing: {url}")
+                            progress_bar.progress((i + 1) / len(new_links))
+                            continue
                         if isinstance(res, str) and res.startswith("Error"):
                             dm.update_article(saved_art["id"], {"last_error": res, "status": "Not Started"})
                         else:
                             try:
                                 data = json.loads(res)
                                 data = normalize_analysis(data)
-                                updates = {
-                                    "status": "Not Started",
-                                    "article_title": data.get("article_title", "Unknown Title"),
-                                    "date": data.get("date"),
-                                    "date_verification": data.get("date_verification"),
-                                    "fraud_indicator": data.get("fraud_indicator"),
-                                    "tl_dr": data.get("tl_dr", data.get("summary")),
-                                    "full_summary_bullets": data.get("full_summary_bullets"),
-                                    "people_mentioned": data.get("people_mentioned"),
-                                    "prevention_strategies": data.get("prevention_strategies", data.get("prevention")),
-                                    "discovery_questions": data.get("discovery_questions"),
-                                    "last_error": ""
-                                }
-                                dm.update_article(saved_art["id"], updates)
+                                tl_val = data.get("tl_dr", data.get("summary", ""))
+                                if isinstance(tl_val, str) and tl_val.strip() == "Unknown - Bad Link?":
+                                    mark_url_deleted(url)
+                                    dm.delete_article(saved_art["id"])
+                                    if force:
+                                        st.warning(f"Skipped (Bad Link): {url}")
+                                else:
+                                    updates = {
+                                        "status": "Not Started",
+                                        "article_title": data.get("article_title", "Unknown Title"),
+                                        "date": data.get("date"),
+                                        "date_verification": data.get("date_verification"),
+                                        "fraud_indicator": data.get("fraud_indicator"),
+                                        "tl_dr": data.get("tl_dr", data.get("summary")),
+                                        "full_summary_bullets": data.get("full_summary_bullets"),
+                                        "people_mentioned": data.get("people_mentioned"),
+                                        "prevention_strategies": data.get("prevention_strategies", data.get("prevention")),
+                                        "discovery_questions": data.get("discovery_questions"),
+                                        "last_error": ""
+                                    }
+                                    dm.update_article(saved_art["id"], updates)
+                                    added_ok = True
                             except:
                                 dm.update_article(saved_art["id"], {"last_error": "JSON Parse Error"})
                     else:
                         dm.update_article(saved_art["id"], {"last_error": "No API Key"})
                 
-                added_count += 1
+                if added_ok:
+                    added_count += 1
                 progress_bar.progress((i + 1) / len(new_links))
             
             st.success(f"Successfully added {added_count} new article(s) from email.")
@@ -418,7 +453,6 @@ def main():
             st_autorefresh(interval=60000, key="email_poll")
         except Exception:
             pass
-        maybe_auto_check_email(email_user, email_pass, api_key)
 
         st.markdown("---")
         
@@ -656,11 +690,9 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         if isinstance(txt, str) and txt.startswith("Error"):
                             log(f"Scrape Failed: {txt}")
                             try:
-                                dm.update_article(current_id, {
-                                    "last_error": txt, 
-                                    "status": "Error",
-                                    "tl_dr": "Unknown - Bad Link?"
-                                })
+                                # User requested to delete entry if bad link
+                                dm.delete_article(current_id)
+                                log("Deleted article due to bad link.")
                             except: pass
                         else:
                             log(f"Scrape Success ({len(txt)} chars). Analyzing...")
@@ -739,13 +771,28 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             else:
                 target_mode = "URL"
                 target_content = url_input.strip()
-                
-                # Check for duplicate
-                existing_arts = dm.get_all_articles()
-                if any(a.get("url") == target_content for a in existing_arts):
-                    st.warning(f"This URL has already been processed: {target_content}")
+                lower_url = target_content.lower()
+                if lower_url.startswith("https://scouts.yutori.com/upgrade"):
+                    st.warning("This URL is excluded and will not be processed.")
                     target_mode = None
                     target_content = None
+                elif "favicon" in lower_url:
+                    st.warning("Favicon URLs are ignored. Please provide an article URL.")
+                    target_mode = None
+                    target_content = None
+                else:
+                    prefs = dm.get_preferences()
+                    deleted_urls = set(prefs.get("deleted_urls", []))
+                    if target_content in deleted_urls:
+                        st.warning("This URL was deleted and will not be processed again.")
+                        target_mode = None
+                        target_content = None
+                    else:
+                        existing_arts = dm.get_all_articles()
+                        if any(a.get("url") == target_content for a in existing_arts):
+                            st.warning(f"This URL has already been processed: {target_content}")
+                            target_mode = None
+                            target_content = None
         elif analyze_text:
             if not text_input:
                 st.error("Please paste text.")
@@ -779,19 +826,6 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                 if article_text.startswith("Error"):
                     log(f"Scrape Failed: {article_text}")
                     st.error(f"Failed to scrape article: {article_text}")
-                    # Save as error record
-                    err_data = {
-                        "article_title": "Unknown - Link Error",
-                        "url": target_url_display,
-                        "tl_dr": "Unknown - Bad Link?",
-                        "status": "Error",
-                        "last_error": article_text,
-                        "date": datetime.now().strftime("%Y-%m-%d"),
-                        "fraud_indicator": "Unknown"
-                    }
-                    dm.save_article(err_data)
-                    st.warning("Saved as error record.")
-                    st.rerun()
                 else:
                     log(f"Text ready ({len(article_text)} chars). Analyzing...")
                     with st.spinner("Analyzing with ChatGPT..."):
@@ -805,7 +839,12 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         try:
                             data = json.loads(analysis_result)
                             data = normalize_analysis(data)
-                            data["url"] = target_url_display
+                            if target_mode == "URL":
+                                data["url"] = target_content
+                                data["source"] = "url"
+                            else:
+                                data["url"] = target_url_display
+                                data["source"] = "text"
                             dm.save_article(data)
                             log("Saved successfully.")
                             st.success("Analysis Complete! The article has been added to the dashboard.")
@@ -947,33 +986,36 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     if st.button("Delete Selected", type="primary", use_container_width=True):
                         sel = list(st.session_state["selected_rows"])
                         if sel:
+                            id_to_url = {a["id"]: a.get("url") for a in articles if a.get("id")}
                             for aid in sel:
+                                url_del = id_to_url.get(aid)
+                                if url_del:
+                                    mark_url_deleted(url_del)
                                 dm.delete_article(aid)
                             st.session_state["selected_rows"] = set()
                             st.success(f"Deleted {len(sel)} articles.")
                             st.rerun()
 
-            # --- HEADER ROW ---
             st.markdown("---")
-            h1, h2, h3, h4, h5, h6 = st.columns([0.5, 3, 1, 1, 1, 4])
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([0.5, 3, 1, 1, 1, 1, 1, 3])
             h1.markdown("**Sel**")
             h2.markdown("**Title**")
-            h3.markdown("**Date**")
-            h4.markdown("**Fraud**")
-            h5.markdown("**Status**")
-            h6.markdown("**TL;DR Summary**")
+            h3.markdown("**Date Added**")
+            h4.markdown("**Article Date**")
+            h5.markdown("**Source**")
+            h6.markdown("**Fraud**")
+            h7.markdown("**Status**")
+            h8.markdown("**TL;DR Summary**")
             st.markdown("---")
             
-            # --- RENDER ROWS ---
             for idx, row in view_df.iterrows():
                 aid = row.get("id")
-                if not aid: continue # Skip duplicates/invalid
+                if not aid:
+                    continue
                 
-                c1, c2, c3, c4, c5, c6 = st.columns([0.5, 3, 1, 1, 1, 4])
+                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([0.5, 3, 1, 1, 1, 1, 1, 3])
                 
-                # 1. Selection
                 is_sel = aid in st.session_state["selected_rows"]
-                # Use a callback to update state immediately
                 def update_sel(aid=aid):
                     if st.session_state[f"sel_{aid}"]:
                         st.session_state["selected_rows"].add(aid)
@@ -982,32 +1024,41 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
 
                 c1.checkbox("Select", key=f"sel_{aid}", value=is_sel, on_change=update_sel, label_visibility="collapsed")
                 
-                # 2. Title (Link)
                 title = row.get("article_title", "Untitled")
                 url = row.get("url", "#")
-                # Make title a clickable link
                 c2.markdown(f"[{title}]({url})")
                 
-                # 3. Date (mm/dd/yy)
-                d_str = row.get("date", "")
-                d_fmt = d_str
+                da_val = row.get("added_at")
+                da_str = da_val if isinstance(da_val, str) else ""
+                da_fmt = ""
+                try:
+                    if da_str:
+                        da_fmt = pd.to_datetime(da_str).strftime("%m/%d/%y")
+                except:
+                    da_fmt = da_str or ""
+                c3.write(da_fmt)
+
+                d_val = row.get("date")
+                d_str = d_val if isinstance(d_val, str) else ""
+                d_fmt = ""
                 try:
                     if d_str and d_str != "Duplicate":
                         d_fmt = pd.to_datetime(d_str).strftime("%m/%d/%y")
-                except: pass
-                c3.write(d_fmt)
+                except:
+                    d_fmt = d_str or ""
+                c4.write(d_fmt)
+
+                src = row.get("source", "")
+                c5.write(src)
                 
-                # 4. Fraud
-                c4.write(row.get("fraud_indicator", ""))
-                
-                # 5. Status
-                c5.write(row.get("status", ""))
-                
-                # 6. Summary
-                c6.write(row.get("tl_dr", ""))
+                c6.write(row.get("fraud_indicator", ""))
+                c7.write(row.get("status", ""))
+                c8.write(row.get("tl_dr", ""))
                 
                 st.markdown("<hr style='margin: 0.5em 0; opacity: 0.3;'>", unsafe_allow_html=True)
 
+        # Auto-check email after rendering list
+        maybe_auto_check_email(email_user, email_pass, api_key)
 
     else:
         # --- DETAILS VIEW ---
@@ -1202,6 +1253,9 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
 
                 with col_del:
                     if st.button("🗑️ Delete", type="primary"):
+                        url_del = article.get("url")
+                        if url_del:
+                            mark_url_deleted(url_del)
                         dm.delete_article(article["id"])
                         st.success("Article deleted.")
                         try: st.query_params["article_id"] = ""
