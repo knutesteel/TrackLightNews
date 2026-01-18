@@ -754,13 +754,19 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
         col_url, col_text = st.columns(2)
         with col_url:
             st.markdown("### By URL")
-            url_input = st.text_input("Article URL", placeholder="https://example.com/news-article")
-            analyze_url = st.button("Analyze URL", type="primary")
+            ucol1, ucol2 = st.columns([4, 1])
+            with ucol1:
+                url_input = st.text_input("Article URL", placeholder="https://example.com/news-article")
+            with ucol2:
+                analyze_url = st.button("Analyze URL", type="primary")
 
         with col_text:
             st.markdown("### By Text")
-            text_input = st.text_area("Article Text", height=150, placeholder="Paste full text here...")
-            analyze_text = st.button("Analyze Text", type="primary")
+            tcol1, tcol2 = st.columns([4, 1])
+            with tcol1:
+                text_input = st.text_input("Article Text", placeholder="Paste full text here...")
+            with tcol2:
+                analyze_text = st.button("Analyze Text", type="primary")
 
         target_mode = None
         target_content = None
@@ -863,35 +869,21 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             # Prepare DataFrame
             df = pd.DataFrame(articles)
             
-            # --- Filters & Sorting Controls ---
+            # --- Filters, Sorting, and Order Controls (single row) ---
             status_options = ["Not Started", "In Process", "Qualified", "Disqualified", "Error", "Completed", "Archived"]
-            # Default to empty (show all). Key ensures persistence across reruns.
-            status_filter = st.multiselect("Filter by Status", status_options, default=[], key="status_filter")
-
-            col_sort1, col_sort2 = st.columns([2, 1])
-            with col_sort1:
+            fcol1, fcol2, fcol3 = st.columns([2, 2, 1.5])
+            with fcol1:
+                status_filter = st.multiselect("Filter by Status", status_options, default=[], key="status_filter")
+            with fcol2:
                 sort_by_options = ["Date Added", "Fraud Indicator", "Title", "Date", "Status"]
                 default_sort_by = st.session_state.get("sort_by", "Date Added")
                 sort_by = st.selectbox("Sort by", sort_by_options, index=sort_by_options.index(default_sort_by))
                 st.session_state["sort_by"] = sort_by
-            
-            with col_sort2:
+            with fcol3:
                 order_options = ["Descending", "Ascending"]
                 default_order = st.session_state.get("sort_order", "Descending")
                 sort_order = st.radio("Order", order_options, index=order_options.index(default_order), horizontal=True)
                 st.session_state["sort_order"] = sort_order
-
-            # Export to Excel
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Articles')
-            
-            st.download_button(
-                label="📥 Export Table to Excel",
-                data=excel_buffer.getvalue(),
-                file_name=f"articles_export_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
 
             view_df = df.copy()
 
@@ -941,14 +933,24 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             # --- SELECTION STATE MANAGEMENT ---
             if "selected_rows" not in st.session_state:
                 st.session_state["selected_rows"] = set()
-            
-            # Bulk Selection
-            col_sel1, col_sel2, col_dummy = st.columns([1, 1, 6])
-            with col_sel1:
+
+            # Export & Bulk Selection on a single row
+            top_bar_1, top_bar_2, top_bar_3 = st.columns([2, 1, 1])
+            with top_bar_1:
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    view_df.to_excel(writer, index=False, sheet_name='Articles')
+                st.download_button(
+                    label="📥 Export Table to Excel",
+                    data=excel_buffer.getvalue(),
+                    file_name=f"articles_export_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            with top_bar_2:
                 if st.button("Select All"):
                     st.session_state["selected_rows"] = set(view_df["id"].dropna().tolist())
                     st.rerun()
-            with col_sel2:
+            with top_bar_3:
                 if st.button("Deselect All"):
                     st.session_state["selected_rows"] = set()
                     st.rerun()
