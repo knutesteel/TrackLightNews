@@ -1265,30 +1265,30 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         st.session_state["is_details"] = False
                         st.rerun()
 
-                # Sticky Notes Field
-                st.markdown("**Notes**")
-                def update_notes():
-                    # Callback to save notes
-                    new_val = st.session_state.get(f"notes_{article['id']}")
-                    if new_val is not None:
-                        article["notes"] = new_val
-                        dm.update_article(article["id"], {"notes": new_val})
+            # --- Title & Compressed Metadata/Controls ---
+            st.markdown("---")
+            st.subheader(f"📄 {article.get('article_title', 'Unknown')}")
 
-                st.text_area(
-                    "Notes", 
-                    value=article.get("notes", ""), 
-                    height=100, 
-                    key=f"notes_{article['id']}", 
-                    label_visibility="collapsed",
-                    on_change=update_notes,
-                    placeholder="Add notes here (auto-saved)..."
-                )
-
-                # --- Status & Priority ---
-                st.markdown("#### Status & Priority")
-                sp_col1, sp_col2 = st.columns(2)
+            with st.expander("📝 Metadata, Status & Notes", expanded=False):
+                # Metadata Row
+                md_c1, md_c2 = st.columns(2)
+                with md_c1:
+                    st.caption(f"ID: {article.get('id')}")
+                    if total_count > 0:
+                        st.caption(f"Article {current_index + 1} of {total_count}")
+                    st.markdown(f"**Date:** {article.get('date', 'Unknown')}")
+                    if article.get('date_verification'):
+                        st.caption(f"📅 Verification: {article.get('date_verification')}")
+                with md_c2:
+                    st.markdown(f"**URL:** {article.get('url', 'N/A')}")
                 
-                with sp_col1:
+                st.markdown("---")
+                
+                # Status & Notes
+                c_status, c_notes = st.columns([1, 1])
+                
+                with c_status:
+                    st.markdown("**Status & Priority**")
                     current_status = article.get("status", "Not Started")
                     status_opts = ["Not Started", "In Process", "Qualified", "Error", "Completed", "Archived"]
                     if current_status not in status_opts:
@@ -1301,7 +1301,6 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         key=f"status_sel_{article['id']}"
                     )
 
-                with sp_col2:
                     current_prio = article.get("priority", "Medium")
                     prio_opts = ["High", "Medium", "Low"]
                     if current_prio not in prio_opts:
@@ -1314,30 +1313,30 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         key=f"prio_sel_{article['id']}"
                     )
 
-                if st.button("Update Status & Priority", key=f"btn_update_sp_{article['id']}"):
-                    article["status"] = new_status
-                    article["priority"] = new_prio
-                    dm.update_article(article["id"], {"status": new_status, "priority": new_prio})
-                    st.success(f"Updated: {new_status} / {new_prio}")
-                    st.rerun()
+                    if st.button("Update Status & Priority", key=f"btn_update_sp_{article['id']}"):
+                        article["status"] = new_status
+                        article["priority"] = new_prio
+                        dm.update_article(article["id"], {"status": new_status, "priority": new_prio})
+                        st.success(f"Updated: {new_status} / {new_prio}")
+                        st.rerun()
 
-                
-                # Removed old text area block since it's now in popover
-                # if st.session_state.get("show_reanalyze_text"): ...
+                with c_notes:
+                    st.markdown("**Notes**")
+                    def update_notes():
+                        new_val = st.session_state.get(f"notes_{article['id']}")
+                        if new_val is not None:
+                            article["notes"] = new_val
+                            dm.update_article(article["id"], {"notes": new_val})
 
-            st.markdown("---")
-            
-            st.subheader(f"📄 {article.get('article_title', 'Unknown')}")
-            st.caption(f"ID: {article.get('id')}")
-            
-            # Navigation between articles (Moved to top sticky bar)
-            if total_count > 0:
-                st.caption(f"Article {current_index + 1} of {total_count}")
-            
-            st.markdown(f"**Date:** {article.get('date', 'Unknown')}")
-            if article.get('date_verification'):
-                st.caption(f"📅 Verification: {article.get('date_verification')}")
-            st.markdown(f"**URL:** {article.get('url', 'N/A')}")
+                    st.text_area(
+                        "Notes", 
+                        value=article.get("notes", ""), 
+                        height=150, 
+                        key=f"notes_{article['id']}", 
+                        label_visibility="collapsed",
+                        on_change=update_notes,
+                        placeholder="Add notes here (auto-saved)..."
+                    )
             
             st.markdown("### A. TL;DR")
             st.write(article.get("tl_dr", article.get("summary", "No summary.")))
