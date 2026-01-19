@@ -160,7 +160,10 @@ def analyze_with_chatgpt(text, api_key, timeout_seconds=45):
     8. "allegations": 2–4 concise bullet points summarizing alleged actions/issues (use "None" if not applicable).
     9. "current_situation": 2–4 concise bullet points summarizing the current status.
     10. "next_steps": 2–4 concise bullet points for what comes next (investigations, audits, policy changes).
-    11. "people_mentioned": A list of names of people or key contacts mentioned.
+    11. "people_mentioned": A list of objects, each containing:
+       - "name": The name of the person.
+       - "role_analysis": A brief statement (1-2 sentences) on the context of their mention and analysis of their involvement/role (e.g. "Acting Chief AI Officer led the strategy...").
+       - "linkedin_url": A valid LinkedIn URL if found or easily inferred, or a LinkedIn search URL (e.g. "https://www.linkedin.com/search/results/all/?keywords=First+Last+Company") if not found.
     12. "prevention_strategies": A list of objects, where each object has:
        - "issue": A string referencing a specific key point or fraud vulnerability from the summary.
        - "prevention": A string explaining how Tracklight.ai (a fraud prevention platform) could have prevented this specific issue. Tailor the response to the issue.
@@ -1493,20 +1496,43 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             
             st.markdown("### I. People Mentioned")
             people = article.get("people_mentioned", [])
-            tl = article.get("tl_dr", "")
-            bullets_text = ""
-            if isinstance(bullets, list):
-                bullets_text = "\n".join([str(x) for x in bullets])[:2000]
+            
             if isinstance(people, list) and people:
                 for person in people:
-                    st.markdown(f"**{person}**")
-                    ov = get_person_overview(person, tl, bullets_text, api_key)
-                    if ov:
-                        st.markdown(f"<div style='margin-left: 1em;'>{ov}</div>", unsafe_allow_html=True)
-                        q = quote_plus(f"Analyze {person}'s role in {article.get('article_title', '')}")
-                        st.markdown(f"[Deeper Analysis of {person}](https://chat.openai.com/?q={q})")
+                    # Handle both old string format and new object format
+                    if isinstance(person, str):
+                         st.markdown(f"**{person}**")
+                         # Legacy: Try to fetch overview dynamically if not present
+                         tl = article.get("tl_dr", "")
+                         bullets = article.get("full_summary_bullets", [])
+                         bullets_text = "\n".join([str(x) for x in bullets])[:2000] if isinstance(bullets, list) else ""
+                         ov = get_person_overview(person, tl, bullets_text, api_key)
+                         if ov:
+                             st.markdown(f"<div style='margin-left: 1em;'>{ov}</div>", unsafe_allow_html=True)
+                         q = quote_plus(f"Analyze {person}'s role in {article.get('article_title', '')}")
+                         st.markdown(f"[Deeper Analysis of {person}](https://chat.openai.com/?q={q})")
+                    
+                    elif isinstance(person, dict):
+                        name = person.get("name", "Unknown Name")
+                        role = person.get("role_analysis", "No analysis provided.")
+                        link = person.get("linkedin_url", "")
+                        
+                        st.markdown(f"**{name}**")
+                        st.markdown(f"<div style='margin-left: 1em; margin-bottom: 0.5em;'>{role}</div>", unsafe_allow_html=True)
+                        
+                        links_md = []
+                        if link:
+                            links_md.append(f"[LinkedIn Profile]({link})")
+                        
+                        # Add a Deeper Analysis link
+                        q = quote_plus(f"Analyze {name}'s role in {article.get('article_title', '')}")
+                        links_md.append(f"[Deeper Analysis (ChatGPT)](https://chat.openai.com/?q={q})")
+                        
+                        st.markdown(f"<div style='margin-left: 1em; font-size: 0.9em;'>{' | '.join(links_md)}</div>", unsafe_allow_html=True)
+                        st.markdown("") # Spacer
+
             else:
-                st.write(str(people))
+                st.write("No people mentioned.")
             
             st.markdown("---")
             st.markdown("### J. Discovery Questions")
