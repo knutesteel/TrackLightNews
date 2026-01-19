@@ -1259,15 +1259,51 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         if url_del:
                             mark_url_deleted(url_del)
                         dm.delete_article(article["id"])
-                        st.success("Article deleted.")
-                        try: st.query_params["article_id"] = ""
-                        except: pass
-                        st.session_state["is_details"] = False
-                        st.rerun()
+                        
+                        # Handle Navigation after delete
+                        if total_count > 0:
+                            # Remove from current view
+                            if current_index < len(current_view):
+                                current_view.pop(current_index)
+                            
+                            new_total = len(current_view)
+                            if new_total > 0:
+                                # Stay at current index if possible, otherwise move back
+                                new_index = min(current_index, new_total - 1)
+                                st.session_state["selected_index"] = new_index
+                                st.session_state["selected_article"] = current_view[new_index]
+                                st.query_params["article_id"] = current_view[new_index]["id"]
+                                st.success("Article deleted. Loading next...")
+                                st.rerun()
+                            else:
+                                # List is now empty
+                                st.session_state["is_details"] = False
+                                st.query_params["article_id"] = ""
+                                st.success("Article deleted. Returning to dashboard.")
+                                st.rerun()
+                        else:
+                            st.session_state["is_details"] = False
+                            st.query_params["article_id"] = ""
+                            st.success("Article deleted.")
+                            st.rerun()
 
             # --- Title & Compressed Metadata/Controls ---
             st.markdown("---")
-            st.subheader(f"📄 {article.get('article_title', 'Unknown')}")
+            
+            # Editable Title
+            def update_title():
+                new_t = st.session_state.get(f"title_edit_{article['id']}")
+                if new_t and new_t != article.get("article_title"):
+                    article["article_title"] = new_t
+                    dm.update_article(article["id"], {"article_title": new_t})
+            
+            st.text_input(
+                "Article Title",
+                value=article.get("article_title", "Unknown"),
+                key=f"title_edit_{article['id']}",
+                on_change=update_title,
+                help="Edit the article title here"
+            )
 
             with st.expander("📝 Metadata, Status & Notes", expanded=False):
                 # Metadata Row
