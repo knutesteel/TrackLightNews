@@ -1306,33 +1306,47 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             # --- Title & Compressed Metadata/Controls ---
             st.markdown("---")
             
-            # Editable Title
+            # Editable Title & Date
             def update_title():
                 new_t = st.session_state.get(f"title_edit_{article['id']}")
                 if new_t and new_t != article.get("article_title"):
                     article["article_title"] = new_t
                     dm.update_article(article["id"], {"article_title": new_t})
             
-            st.text_input(
-                "Article Title",
-                value=article.get("article_title", "Unknown"),
-                key=f"title_edit_{article['id']}",
-                on_change=update_title,
-                help="Edit the article title here"
-            )
+            def update_date():
+                new_d = st.session_state.get(f"date_edit_{article['id']}")
+                if new_d and new_d != article.get("date"):
+                    article["date"] = new_d
+                    dm.update_article(article["id"], {"date": new_d})
+
+            col_title, col_date = st.columns([3, 1])
+            with col_title:
+                st.text_input(
+                    "Article Title",
+                    value=article.get("article_title", "Unknown"),
+                    key=f"title_edit_{article['id']}",
+                    on_change=update_title,
+                    help="Edit the article title here"
+                )
+            with col_date:
+                st.text_input(
+                    "Date",
+                    value=article.get("date", ""),
+                    key=f"date_edit_{article['id']}",
+                    on_change=update_date,
+                    help="Edit the article date"
+                )
 
             with st.expander("📝 Metadata, Status & Notes", expanded=False):
-                # Metadata Row
-                md_c1, md_c2 = st.columns(2)
+                # Metadata Row: ID, Article #, URL
+                md_c1, md_c2, md_c3 = st.columns([1, 1, 3])
                 with md_c1:
-                    st.caption(f"ID: {article.get('id')}")
-                    if total_count > 0:
-                        st.caption(f"Article {current_index + 1} of {total_count}")
-                    st.markdown(f"**Date:** {article.get('date', 'Unknown')}")
-                    if article.get('date_verification'):
-                        st.caption(f"📅 Verification: {article.get('date_verification')}")
+                    st.caption(f"**ID:** {article.get('id')}")
                 with md_c2:
-                    st.markdown(f"**URL:** {article.get('url', 'N/A')}")
+                    if total_count > 0:
+                        st.caption(f"**Article:** {current_index + 1} / {total_count}")
+                with md_c3:
+                    st.caption(f"**URL:** {article.get('url', 'N/A')}")
                 
                 st.markdown("---")
                 
@@ -1345,25 +1359,28 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     status_opts = ["Not Started", "In Process", "Qualified", "Error", "Completed", "Archived"]
                     if current_status not in status_opts:
                         status_opts.append(current_status)
-                    
-                    new_status = st.selectbox(
-                        "Status", 
-                        options=status_opts, 
-                        index=status_opts.index(current_status), 
-                        key=f"status_sel_{article['id']}"
-                    )
 
                     current_prio = article.get("priority", "Medium")
                     prio_opts = ["High", "Medium", "Low"]
                     if current_prio not in prio_opts:
                         prio_opts.append(current_prio)
 
-                    new_prio = st.selectbox(
-                        "Priority", 
-                        options=prio_opts, 
-                        index=prio_opts.index(current_prio), 
-                        key=f"prio_sel_{article['id']}"
-                    )
+                    # Status and Priority on same line
+                    sp_c1, sp_c2 = st.columns(2)
+                    with sp_c1:
+                        new_status = st.selectbox(
+                            "Status", 
+                            options=status_opts, 
+                            index=status_opts.index(current_status), 
+                            key=f"status_sel_{article['id']}"
+                        )
+                    with sp_c2:
+                        new_prio = st.selectbox(
+                            "Priority", 
+                            options=prio_opts, 
+                            index=prio_opts.index(current_prio), 
+                            key=f"prio_sel_{article['id']}"
+                        )
 
                     if st.button("Update Status & Priority", key=f"btn_update_sp_{article['id']}"):
                         article["status"] = new_status
