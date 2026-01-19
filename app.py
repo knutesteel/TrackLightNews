@@ -156,7 +156,7 @@ def analyze_with_chatgpt(text, api_key, timeout_seconds=45):
     4. "fraud_indicator": One of ["High", "Medium", "Low"].
     5. "tl_dr": A two-sentence summary of the article (formerly 'summary').
     6. "full_summary_bullets": A list of strings, each a key point from the article.
-    7. "history_overview": 2–4 concise bullet points summarizing relevant history or background.
+    7. "organizations_involved": List each government organization involved in the case.
     8. "allegations": 2–4 concise bullet points summarizing alleged actions/issues (use "None" if not applicable).
     9. "current_situation": 2–4 concise bullet points summarizing the current status.
     10. "next_steps": 2–4 concise bullet points for what comes next (investigations, audits, policy changes).
@@ -374,6 +374,10 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
                                         "fraud_indicator": data.get("fraud_indicator"),
                                         "tl_dr": data.get("tl_dr", data.get("summary")),
                                         "full_summary_bullets": data.get("full_summary_bullets"),
+                                        "organizations_involved": data.get("organizations_involved"),
+                                        "allegations": data.get("allegations"),
+                                        "current_situation": data.get("current_situation"),
+                                        "next_steps": data.get("next_steps"),
                                         "people_mentioned": data.get("people_mentioned"),
                                         "prevention_strategies": data.get("prevention_strategies", data.get("prevention")),
                                         "discovery_questions": data.get("discovery_questions"),
@@ -715,6 +719,10 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                                         "fraud_indicator": data.get("fraud_indicator", row.get("fraud_indicator")),
                                         "tl_dr": data.get("tl_dr", data.get("summary", row.get("tl_dr", row.get("summary")))),
                                         "full_summary_bullets": data.get("full_summary_bullets", row.get("full_summary_bullets")),
+                                        "organizations_involved": data.get("organizations_involved", row.get("organizations_involved")),
+                                        "allegations": data.get("allegations", row.get("allegations")),
+                                        "current_situation": data.get("current_situation", row.get("current_situation")),
+                                        "next_steps": data.get("next_steps", row.get("next_steps")),
                                         "people_mentioned": data.get("people_mentioned", row.get("people_mentioned")),
                                         "prevention_strategies": data.get("prevention_strategies", row.get("prevention_strategies", row.get("prevention"))),
                                         "discovery_questions": data.get("discovery_questions", row.get("discovery_questions")),
@@ -1164,6 +1172,10 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                                                 "fraud_indicator": d.get("fraud_indicator"),
                                                 "tl_dr": d.get("tl_dr", d.get("summary")),
                                                 "full_summary_bullets": d.get("full_summary_bullets"),
+                                                "organizations_involved": d.get("organizations_involved"),
+                                                "allegations": d.get("allegations"),
+                                                "current_situation": d.get("current_situation"),
+                                                "next_steps": d.get("next_steps"),
                                                 "people_mentioned": d.get("people_mentioned"),
                                                 "prevention_strategies": d.get("prevention_strategies", d.get("prevention")),
                                                 "discovery_questions": d.get("discovery_questions"),
@@ -1201,6 +1213,10 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                                                 "fraud_indicator": d.get("fraud_indicator"),
                                                 "tl_dr": d.get("tl_dr", d.get("summary")),
                                                 "full_summary_bullets": d.get("full_summary_bullets"),
+                                                "organizations_involved": d.get("organizations_involved"),
+                                                "allegations": d.get("allegations"),
+                                                "current_situation": d.get("current_situation"),
+                                                "next_steps": d.get("next_steps"),
                                                 "people_mentioned": d.get("people_mentioned"),
                                                 "prevention_strategies": d.get("prevention_strategies", d.get("prevention")),
                                                 "discovery_questions": d.get("discovery_questions"),
@@ -1385,15 +1401,15 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             else:
                 st.write("No full summary available.")
 
-            st.markdown("### C. History")
-            history = article.get("history_overview", [])
-            if isinstance(history, list) and history:
-                for h in history:
-                    st.write(f"• {h}")
-            elif isinstance(history, str) and history:
-                st.write(history)
+            st.markdown("### C. Organizations Involved")
+            orgs = article.get("organizations_involved", [])
+            if isinstance(orgs, list) and orgs:
+                for o in orgs:
+                    st.write(f"• {o}")
+            elif isinstance(orgs, str) and orgs:
+                st.write(orgs)
             else:
-                st.write("No history overview available.")
+                st.write("No organizations listed.")
 
             st.markdown("### D. Allegations")
             allegations = article.get("allegations", [])

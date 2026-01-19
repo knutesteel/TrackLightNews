@@ -10,7 +10,7 @@ def normalize_analysis(data):
             "people_mentioned",
             "prevention_strategies",
             "discovery_questions",
-            "history_overview",
+            "organizations_involved",
             "allegations",
             "current_situation",
             "next_steps",
