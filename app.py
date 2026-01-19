@@ -1184,6 +1184,11 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                                              dm.update_article(article["id"], updates)
                                              # Update session state object
                                              article.update(updates)
+                                             # Update widget state to reflect new analysis
+                                             if d.get("article_title"):
+                                                 st.session_state[f"title_edit_{article['id']}"] = d.get("article_title")
+                                             if d.get("date"):
+                                                 st.session_state[f"date_edit_{article['id']}"] = d.get("date")
                                              st.success("Reanalyzed successfully!")
                                              st.rerun()
                                          except Exception as e:
@@ -1224,6 +1229,11 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                                              }
                                              dm.update_article(article["id"], updates)
                                              article.update(updates)
+                                             # Update widget state to reflect new analysis
+                                             if d.get("article_title"):
+                                                 st.session_state[f"title_edit_{article['id']}"] = d.get("article_title")
+                                             if d.get("date"):
+                                                 st.session_state[f"date_edit_{article['id']}"] = d.get("date")
                                              st.success("Reanalyzed successfully!")
                                              st.rerun()
                                          except Exception as e:
