@@ -223,6 +223,24 @@ def get_person_overview(person, tl_dr, bullets_text, api_key):
     except Exception:
         return ""
 
+@st.cache_data(show_spinner=False)
+def generate_outreach_text(prompt, api_key):
+    try:
+        if not api_key:
+            return "Error: No API Key provided."
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a professional communication assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 # Initialize Managers
 dm = DataManager()
 sm = SheetManager()
@@ -636,7 +654,8 @@ def logs_page():
 def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email_user, email_pass):
     col_title, col_check, col_global = st.columns([2.5, 1, 1])
     with col_title:
-        st.title("🔍 Tracklight.ai Article Analyzer")
+        # Title removed as per user request (redundant)
+        pass
     with col_check:
         if st.button("📧 Check Email Now"):
              maybe_auto_check_email(email_user, email_pass, api_key, force=True)
@@ -880,6 +899,9 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             # Prepare DataFrame
             df = pd.DataFrame(articles)
             
+            # --- Search ---
+            search_query = st.text_input("Search Articles", placeholder="Search in Title, Summary, People mentioned...", key="search_query")
+
             # --- Filters, Sorting, and Order Controls (single row) ---
             status_options = ["Not Started", "In Process", "Qualified", "Disqualified", "Error", "Completed", "Archived"]
             fcol1, fcol2, fcol3 = st.columns([2, 2, 1.5])
@@ -897,6 +919,44 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                 st.session_state["sort_order"] = sort_order
 
             view_df = df.copy()
+
+            # Apply Search Filter
+            if search_query:
+                q = search_query.lower()
+                def match_row(row):
+                    # Helper to safely check string presence
+                    def check(val):
+                        if isinstance(val, str):
+                            return q in val.lower()
+                        if isinstance(val, (int, float)):
+                             return q in str(val).lower()
+                        if isinstance(val, list):
+                            # Check list of strings or dicts
+                            for item in val:
+                                if isinstance(item, str) and q in item.lower():
+                                    return True
+                                if isinstance(item, dict):
+                                    # Check values in dict
+                                    for v in item.values():
+                                        if isinstance(v, str) and q in v.lower():
+                                            return True
+                            return False
+                        return False
+
+                    # Fields to search
+                    fields = [
+                        "article_title", "tl_dr", "summary", 
+                        "full_summary_bullets", "people_mentioned", 
+                        "organizations_involved", "allegations", 
+                        "current_situation", "next_steps", "prevention_strategies"
+                    ]
+                    
+                    for f in fields:
+                        if check(row.get(f)):
+                            return True
+                    return False
+                
+                view_df = view_df[view_df.apply(match_row, axis=1)]
 
             # Apply Status filter
             if "status" in view_df.columns and status_filter:
@@ -1529,6 +1589,40 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         links_md.append(f"[Deeper Analysis (ChatGPT)](https://chat.openai.com/?q={q})")
                         
                         st.markdown(f"<div style='margin-left: 1em; font-size: 0.9em;'>{' | '.join(links_md)}</div>", unsafe_allow_html=True)
+                        
+                        # --- Outreach Buttons ---
+                        col_email, col_connect = st.columns([1, 1])
+                        safe_name = "".join([c for c in name if c.isalnum()])
+                        
+                        with col_email:
+                            if st.button("📧 Generate Intro Email", key=f"btn_email_{article['id']}_{safe_name}"):
+                                with st.spinner("Generating Email..."):
+                                    prompt = f"""
+                                    Write a professional introduction email to {name} ({role}) regarding the article '{article.get("article_title")}'.
+                                    Highlight how Tracklight's fraud detection capabilities (analyzing 100% of data, identifying anomalies, reducing risk) are relevant to the issues mentioned in the article:
+                                    {article.get("tl_dr", "")}
+                                    Keep it concise and professional.
+                                    """
+                                    email_content = generate_outreach_text(prompt, api_key)
+                                    st.session_state[f"gen_email_{article['id']}_{safe_name}"] = email_content
+                        
+                        with col_connect:
+                            if st.button("🔗 LinkedIn Connect Request", key=f"btn_connect_{article['id']}_{safe_name}"):
+                                with st.spinner("Generating Request..."):
+                                    prompt = f"""
+                                    Write a LinkedIn connection request message (max 300 chars) to {name} ({role}) referencing the article '{article.get("article_title")}' and their involvement.
+                                    Mention Tracklight briefly.
+                                    """
+                                    connect_content = generate_outreach_text(prompt, api_key)
+                                    st.session_state[f"gen_connect_{article['id']}_{safe_name}"] = connect_content
+
+                        # Display generated content if available
+                        if st.session_state.get(f"gen_email_{article['id']}_{safe_name}"):
+                            st.text_area("Generated Email", st.session_state[f"gen_email_{article['id']}_{safe_name}"], height=200, key=f"txt_email_{article['id']}_{safe_name}")
+                        
+                        if st.session_state.get(f"gen_connect_{article['id']}_{safe_name}"):
+                            st.text_area("Connection Request", st.session_state[f"gen_connect_{article['id']}_{safe_name}"], height=100, key=f"txt_connect_{article['id']}_{safe_name}")
+
                         st.markdown("") # Spacer
 
             else:
