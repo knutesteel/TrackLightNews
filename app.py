@@ -948,7 +948,8 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         "article_title", "tl_dr", "summary", 
                         "full_summary_bullets", "people_mentioned", 
                         "organizations_involved", "allegations", 
-                        "current_situation", "next_steps", "prevention_strategies"
+                        "current_situation", "next_steps", "prevention_strategies",
+                        "notes", "status", "priority", "date", "url", "id"
                     ]
                     
                     for f in fields:
@@ -1410,75 +1411,77 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     help="Edit the article date"
                 )
 
-            with st.expander("📝 Metadata, Status & Notes", expanded=False):
-                # Metadata Row: ID, Article #, URL
-                md_c1, md_c2, md_c3 = st.columns([1, 1, 3])
-                with md_c1:
-                    st.caption(f"**ID:** {article.get('id')}")
-                with md_c2:
-                    if total_count > 0:
-                        st.caption(f"**Article:** {current_index + 1} / {total_count}")
-                with md_c3:
-                    st.caption(f"**URL:** {article.get('url', 'N/A')}")
+            # --- Compact Control Panel (Metadata, Status, Notes) ---
+            # Side-by-side layout to save vertical space
+            c_controls, c_notes = st.columns([1.2, 1])
+            
+            with c_controls:
+                # Row 1: Status & Priority
+                r1_c1, r1_c2 = st.columns(2)
                 
-                st.markdown("---")
-                
-                # Status & Notes
-                c_status, c_notes = st.columns([1, 1])
-                
-                with c_status:
-                    st.markdown("**Status & Priority**")
-                    current_status = article.get("status", "Not Started")
-                    status_opts = ["Not Started", "In Process", "Qualified", "Error", "Completed", "Archived"]
-                    if current_status not in status_opts:
-                        status_opts.append(current_status)
+                def update_sp():
+                    # Callback to auto-save status/priority
+                    s = st.session_state.get(f"status_sel_{article['id']}")
+                    p = st.session_state.get(f"prio_sel_{article['id']}")
+                    if s and p:
+                        article["status"] = s
+                        article["priority"] = p
+                        dm.update_article(article["id"], {"status": s, "priority": p})
 
+                with r1_c1:
+                    current_status = article.get("status", "Not Started")
+                    status_opts = ["Not Started", "In Process", "Qualified", "Disqualified", "Error", "Completed", "Archived"]
+                    if current_status not in status_opts: status_opts.append(current_status)
+                    st.selectbox(
+                        "Status", 
+                        status_opts, 
+                        index=status_opts.index(current_status), 
+                        key=f"status_sel_{article['id']}",
+                        on_change=update_sp
+                    )
+
+                with r1_c2:
                     current_prio = article.get("priority", "Medium")
                     prio_opts = ["High", "Medium", "Low"]
-                    if current_prio not in prio_opts:
-                        prio_opts.append(current_prio)
-
-                    # Status and Priority on same line
-                    sp_c1, sp_c2 = st.columns(2)
-                    with sp_c1:
-                        new_status = st.selectbox(
-                            "Status", 
-                            options=status_opts, 
-                            index=status_opts.index(current_status), 
-                            key=f"status_sel_{article['id']}"
-                        )
-                    with sp_c2:
-                        new_prio = st.selectbox(
-                            "Priority", 
-                            options=prio_opts, 
-                            index=prio_opts.index(current_prio), 
-                            key=f"prio_sel_{article['id']}"
-                        )
-
-                    if st.button("Update Status & Priority", key=f"btn_update_sp_{article['id']}"):
-                        article["status"] = new_status
-                        article["priority"] = new_prio
-                        dm.update_article(article["id"], {"status": new_status, "priority": new_prio})
-                        st.success(f"Updated: {new_status} / {new_prio}")
-                        st.rerun()
-
-                with c_notes:
-                    st.markdown("**Notes**")
-                    def update_notes():
-                        new_val = st.session_state.get(f"notes_{article['id']}")
-                        if new_val is not None:
-                            article["notes"] = new_val
-                            dm.update_article(article["id"], {"notes": new_val})
-
-                    st.text_area(
-                        "Notes", 
-                        value=article.get("notes", ""), 
-                        height=150, 
-                        key=f"notes_{article['id']}", 
-                        label_visibility="collapsed",
-                        on_change=update_notes,
-                        placeholder="Add notes here (auto-saved)..."
+                    if current_prio not in prio_opts: prio_opts.append(current_prio)
+                    st.selectbox(
+                        "Priority", 
+                        prio_opts, 
+                        index=prio_opts.index(current_prio), 
+                        key=f"prio_sel_{article['id']}",
+                        on_change=update_sp
                     )
+                
+                # Row 2: Metadata (ID, Count, URL)
+                parts = []
+                parts.append(f"**ID:** {article.get('id')}")
+                if total_count > 0:
+                    parts.append(f"**Art:** {current_index + 1}/{total_count}")
+                
+                url_val = article.get('url', 'N/A')
+                if url_val and url_val.startswith("http"):
+                    parts.append(f"[Link]({url_val})")
+                else:
+                    parts.append(f"URL: {url_val}")
+                
+                st.markdown(" | ".join(parts))
+
+            with c_notes:
+                def update_notes():
+                    new_val = st.session_state.get(f"notes_{article['id']}")
+                    if new_val is not None:
+                        article["notes"] = new_val
+                        dm.update_article(article["id"], {"notes": new_val})
+
+                st.text_area(
+                    "Notes", 
+                    value=article.get("notes", ""), 
+                    height=100, 
+                    key=f"notes_{article['id']}", 
+                    label_visibility="visible",
+                    on_change=update_notes,
+                    placeholder="Add notes..."
+                )
             
             st.markdown("### A. TL;DR")
             st.write(article.get("tl_dr", article.get("summary", "No summary.")))
