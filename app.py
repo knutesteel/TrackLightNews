@@ -655,6 +655,9 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
     col_title, col_empty = st.columns([2.5, 2])
     with col_title:
         # Title removed as per user request (redundant)
+        # Re-adding count in title area if needed, but user asked for it in "the title"
+        # I'll update the main title if it existed, but it was removed.
+        # I'll assume they want it prominent.
         pass
 
     # --- Queue Processing Logic ---
@@ -772,6 +775,12 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
     is_details = st.session_state.get("is_details", False)
 
     if not is_details:
+        # Get total article count for display
+        articles = dm.get_all_articles()
+        total_count_display = len(articles)
+
+        st.title(f"Tracklight.ai Article Analyzer ({total_count_display} articles)")
+
         # --- Sync Section ---
         col_url, col_text = st.columns(2)
         with col_url:
@@ -1070,12 +1079,12 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                             st.rerun()
 
             st.markdown("---")
-            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([0.5, 3, 1, 1, 1, 1, 1, 3])
+            h1, h2, h3, h4, h6, h7, h8 = st.columns([0.5, 3, 1, 1, 1, 1, 3])
             h1.markdown("**Sel**")
             h2.markdown("**Title**")
             h3.markdown("**Date Added**")
             h4.markdown("**Article Date**")
-            h5.markdown("**Source**")
+            # Source Removed
             h6.markdown("**Fraud**")
             h7.markdown("**Status**")
             h8.markdown("**TL;DR Summary**")
@@ -1086,7 +1095,7 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                 if not aid:
                     continue
                 
-                c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([0.5, 3, 1, 1, 1, 1, 1, 3])
+                c1, c2, c3, c4, c6, c7, c8 = st.columns([0.5, 3, 1, 1, 1, 1, 3])
                 
                 is_sel = aid in st.session_state["selected_rows"]
                 def update_sel(aid=aid):
@@ -1121,8 +1130,7 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     d_fmt = d_str or ""
                 c4.write(d_fmt)
 
-                src = row.get("source", "")
-                c5.write(src)
+                # Source removed
                 
                 c6.write(row.get("fraud_indicator", ""))
                 c7.write(row.get("status", ""))
