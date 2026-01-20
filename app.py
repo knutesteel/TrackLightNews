@@ -652,18 +652,10 @@ def logs_page():
         st.info("No logs available.")
 
 def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email_user, email_pass):
-    col_title, col_check, col_global = st.columns([2.5, 1, 1])
+    col_title, col_empty = st.columns([2.5, 2])
     with col_title:
         # Title removed as per user request (redundant)
         pass
-    with col_check:
-        if st.button("📧 Check Email Now"):
-             maybe_auto_check_email(email_user, email_pass, api_key, force=True)
-    with col_global:
-        if st.button("🌎 Global Analysis"):
-            st.session_state["is_global_summary"] = True
-            st.rerun()
-
 
     # --- Queue Processing Logic ---
     if st.session_state.get("is_reanalyzing", False):
@@ -1007,13 +999,13 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                 st.session_state["selected_rows"] = set()
 
             # Export & Bulk Selection on a single row
-            top_bar_1, top_bar_2, top_bar_3 = st.columns([2, 1, 1])
+            top_bar_1, top_bar_2, top_bar_3, top_bar_4, top_bar_5 = st.columns([1.5, 0.8, 0.8, 1, 1])
             with top_bar_1:
                 excel_buffer = io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                     view_df.to_excel(writer, index=False, sheet_name='Articles')
                 st.download_button(
-                    label="📥 Export Table to Excel",
+                    label="📥 Export Excel",
                     data=excel_buffer.getvalue(),
                     file_name=f"articles_export_{datetime.now().strftime('%Y%m%d')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1025,6 +1017,13 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
             with top_bar_3:
                 if st.button("Deselect All"):
                     st.session_state["selected_rows"] = set()
+                    st.rerun()
+            with top_bar_4:
+                if st.button("📧 Check Email"):
+                     maybe_auto_check_email(email_user, email_pass, api_key, force=True)
+            with top_bar_5:
+                if st.button("🌎 Global Analysis"):
+                    st.session_state["is_global_summary"] = True
                     st.rerun()
 
             # --- ACTIONS BAR ---
@@ -1452,15 +1451,15 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         on_change=update_sp
                     )
                 
-                # Row 2: Metadata (ID, Count, URL)
+                # Row 2: Metadata (Article Count, URL)
                 parts = []
-                parts.append(f"**ID:** {article.get('id')}")
+                # Removed ID from here as per request
                 if total_count > 0:
-                    parts.append(f"**Art:** {current_index + 1}/{total_count}")
+                    parts.append(f"**Article:** {current_index + 1}/{total_count}")
                 
                 url_val = article.get('url', 'N/A')
                 if url_val and url_val.startswith("http"):
-                    parts.append(f"[Link]({url_val})")
+                    parts.append(f"[{url_val}]({url_val})")
                 else:
                     parts.append(f"URL: {url_val}")
                 
@@ -1639,6 +1638,10 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     st.write(f"❓ {q}")
             else:
                 st.write(str(questions))
+
+            # Moved ID to bottom
+            st.markdown("---")
+            st.caption(f"Article ID: {article.get('id')}")
                 
         else:
             st.info("👈 Please select an article from the Dashboard to view details here.")
