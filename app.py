@@ -277,12 +277,17 @@ def get_config(key, default=""):
 def mark_url_deleted(url):
     if not url:
         return
+    url = url.strip()
     prefs = dm.get_preferences()
     deleted = prefs.get("deleted_urls", [])
     if url not in deleted:
         deleted.append(url)
         prefs["deleted_urls"] = deleted
         dm.save_preferences(prefs)
+
+def normalize_url(url):
+    if not url: return ""
+    return url.strip().rstrip('/')
 
 def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
     try:
@@ -327,8 +332,18 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
                 return
 
             articles = dm.get_all_articles()
-            existing_urls = {a.get("url") for a in articles if a.get("url")}
-            new_links = [l for l in links if l not in existing_urls and l not in deleted_urls]
+            existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
+            
+            # Normalize deleted URLs for comparison
+            deleted_set = set()
+            for u in deleted_urls:
+                deleted_set.add(normalize_url(u))
+            
+            new_links = []
+            for l in links:
+                norm_l = normalize_url(l)
+                if norm_l and norm_l not in existing_urls and norm_l not in deleted_set:
+                    new_links.append(l)
 
             if not new_links:
                 if force:
@@ -1074,6 +1089,13 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                                 if url_del:
                                     mark_url_deleted(url_del)
                                 dm.delete_article(aid)
+                            
+                            # Clean up duplicate_rows in session state
+                            if "duplicate_rows" in st.session_state:
+                                dup_rows = st.session_state["duplicate_rows"]
+                                if isinstance(dup_rows, list):
+                                    st.session_state["duplicate_rows"] = [r for r in dup_rows if r.get("id") not in sel]
+
                             st.session_state["selected_rows"] = set()
                             st.success(f"Deleted {len(sel)} articles.")
                             st.rerun()
@@ -1357,31 +1379,32 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                             mark_url_deleted(url_del)
                         dm.delete_article(article["id"])
                         
+                        # Also remove from duplicate_rows if present
+                        if "duplicate_rows" in st.session_state:
+                            dup_rows = st.session_state["duplicate_rows"]
+                            if isinstance(dup_rows, list):
+                                st.session_state["duplicate_rows"] = [r for r in dup_rows if r.get("id") != article["id"]]
+
                         # Handle Navigation after delete
-                        if total_count > 0:
-                            # Remove from current view
-                            if current_index < len(current_view):
-                                current_view.pop(current_index)
-                            
-                            new_total = len(current_view)
-                            if new_total > 0:
-                                # Stay at current index if possible, otherwise move back
-                                new_index = min(current_index, new_total - 1)
-                                st.session_state["selected_index"] = new_index
-                                st.session_state["selected_article"] = current_view[new_index]
-                                st.query_params["article_id"] = current_view[new_index]["id"]
-                                st.success("Article deleted. Loading next...")
-                                st.rerun()
-                            else:
-                                # List is now empty
-                                st.session_state["is_details"] = False
-                                st.query_params["article_id"] = ""
-                                st.success("Article deleted. Returning to dashboard.")
-                                st.rerun()
+                        # Explicitly update current_view in session state
+                        if current_index < len(current_view):
+                            current_view.pop(current_index)
+                            st.session_state["current_view"] = current_view
+                        
+                        new_total = len(current_view)
+                        if new_total > 0:
+                            # Stay at current index if possible, otherwise move back
+                            new_index = min(current_index, new_total - 1)
+                            st.session_state["selected_index"] = new_index
+                            st.session_state["selected_article"] = current_view[new_index]
+                            st.query_params["article_id"] = current_view[new_index]["id"]
+                            st.success("Article deleted. Loading next...")
+                            st.rerun()
                         else:
+                            # List is now empty
                             st.session_state["is_details"] = False
                             st.query_params["article_id"] = ""
-                            st.success("Article deleted.")
+                            st.success("Article deleted. Returning to dashboard.")
                             st.rerun()
 
             # --- Title & Compressed Metadata/Controls ---
@@ -1436,7 +1459,10 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         dm.update_article(article["id"], {"status": s, "priority": p})
 
                 with r1_c1:
-                    current_status = article.get("status", "Not Started")
+                    current_status = article.get("status")
+                    if current_status is None or (isinstance(current_status, float) and pd.isna(current_status)):
+                         current_status = "Not Started"
+                    
                     status_opts = ["Not Started", "In Process", "Qualified", "Disqualified", "Error", "Completed", "Archived"]
                     if current_status not in status_opts: status_opts.append(current_status)
                     st.selectbox(
@@ -1448,7 +1474,10 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                     )
 
                 with r1_c2:
-                    current_prio = article.get("priority", "Medium")
+                    current_prio = article.get("priority")
+                    if current_prio is None or (isinstance(current_prio, float) and pd.isna(current_prio)):
+                         current_prio = "Medium"
+                    
                     prio_opts = ["High", "Medium", "Low"]
                     if current_prio not in prio_opts: prio_opts.append(current_prio)
                     st.selectbox(
@@ -1580,7 +1609,7 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                          if ov:
                              st.markdown(f"<div style='margin-left: 1em;'>{ov}</div>", unsafe_allow_html=True)
                          q = quote_plus(f"Analyze {person}'s role in {article.get('article_title', '')}")
-                         st.markdown(f"[Deeper Analysis of {person}](https://chat.openai.com/?q={q})")
+                         st.link_button("Deeper Analysis", f"https://chat.openai.com/?q={q}")
                     
                     elif isinstance(person, dict):
                         name = person.get("name", "Unknown Name")
@@ -1590,15 +1619,14 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                         st.markdown(f"**{name}**")
                         st.markdown(f"<div style='margin-left: 1em; margin-bottom: 0.5em;'>{role}</div>", unsafe_allow_html=True)
                         
-                        links_md = []
-                        if link:
-                            links_md.append(f"[LinkedIn Profile]({link})")
-                        
-                        # Add a Deeper Analysis link
-                        q = quote_plus(f"Analyze {name}'s role in {article.get('article_title', '')}")
-                        links_md.append(f"[Deeper Analysis (ChatGPT)](https://chat.openai.com/?q={q})")
-                        
-                        st.markdown(f"<div style='margin-left: 1em; font-size: 0.9em;'>{' | '.join(links_md)}</div>", unsafe_allow_html=True)
+                        # Link Buttons
+                        lb_col1, lb_col2 = st.columns([1, 1])
+                        with lb_col1:
+                            if link:
+                                st.link_button("LinkedIn Profile", link)
+                        with lb_col2:
+                            q = quote_plus(f"Analyze {name}'s role in {article.get('article_title', '')}")
+                            st.link_button("Deeper Analysis", f"https://chat.openai.com/?q={q}")
                         
                         # --- Outreach Buttons ---
                         col_email, col_connect = st.columns([1, 1])
