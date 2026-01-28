@@ -242,8 +242,13 @@ def generate_outreach_text(prompt, api_key):
         return f"Error: {str(e)}"
 
 # Initialize Managers
-dm = DataManager()
-sm = SheetManager()
+if "data_manager" not in st.session_state:
+    st.session_state["data_manager"] = DataManager()
+dm = st.session_state["data_manager"]
+
+if "sheet_manager" not in st.session_state:
+    st.session_state["sheet_manager"] = SheetManager()
+sm = st.session_state["sheet_manager"]
 
 def render_brand_header():
     # Check for local logo file
@@ -500,10 +505,18 @@ def main():
         st.caption("Auto-load URLs from a Google Sheet.")
         
         sheet_name = st.text_input("Google Sheet Name / ID / URL", value=get_config("GOOGLE_SHEET_NAME", ""), help="You can enter the exact Name, the Sheet ID, or the full URL.")
-        creds_input = st.text_area("Service Account JSON", placeholder="{ ... }", help="Paste the content of your service_account.json here.")
         
         saved_creds_file = "google_creds.json"
         has_saved_creds = os.path.exists(saved_creds_file)
+        
+        creds_val = ""
+        if has_saved_creds:
+            try:
+                with open(saved_creds_file, 'r') as f:
+                    creds_val = f.read()
+            except: pass
+            
+        creds_input = st.text_area("Service Account JSON", value=creds_val, placeholder="{ ... }", help="Paste the content of your service_account.json here.")
         
         if st.button("Save Google Config"):
             if sheet_name:
@@ -667,13 +680,86 @@ def logs_page():
         st.info("No logs available.")
 
 def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email_user, email_pass):
-    col_title, col_empty = st.columns([2.5, 2])
+    # --- Google Sheet Connection & Sync ---
+    is_sheet_connected = False
+    
+    # Debug info
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**Debug Info:**")
+    st.sidebar.text(f"Has Saved Creds: {has_saved_creds}")
+    st.sidebar.text(f"Sheet Name: {sheet_name}")
+
+    if has_saved_creds and sheet_name:
+        try:
+            # Check if we need to authenticate or re-connect
+            if not dm.sm or not sm.client:
+                with open(saved_creds_file, 'r') as f:
+                    creds = json.load(f)
+                success, msg = sm.authenticate(creds)
+                if success:
+                    st.sidebar.success("Auth Success")
+                    dm.set_backend(sm, sheet_name)
+                    is_sheet_connected = True
+                else:
+                    st.sidebar.error(f"Sheet Auth Error: {msg}")
+            else:
+                is_sheet_connected = True
+        except Exception as e:
+            st.sidebar.error(f"Credentials Error: {e}")
+    else:
+        st.sidebar.warning("Missing Creds or Sheet Name")
+
+    col_title, col_sync = st.columns([2.5, 2])
     with col_title:
         # Title removed as per user request (redundant)
-        # Re-adding count in title area if needed, but user asked for it in "the title"
-        # I'll update the main title if it existed, but it was removed.
-        # I'll assume they want it prominent.
         pass
+
+    with col_sync:
+        if is_sheet_connected:
+            if st.button("🔄 Sync with Google Sheet", help="Pull new URLs and refresh data"):
+                with st.spinner("Syncing..."):
+                    # Reload DB to get latest changes
+                    dm.set_backend(sm, sheet_name)
+                    
+                    articles = dm.get_all_articles()
+                    existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
+                    
+                    # Fetch new from Sheet
+                    new_urls, err = sm.get_new_urls(sheet_name, existing_urls)
+                    
+                    if err:
+                        st.error(err)
+                    elif new_urls:
+                        articles_to_add = []
+                        count = 0
+                        for url in new_urls:
+                            if not url: continue
+                            if normalize_url(url) not in existing_urls:
+                                articles_to_add.append({
+                                    "url": url,
+                                    "article_title": "New from Sheet",
+                                    "status": "Not Started",
+                                    "source": "sheet",
+                                    "added_at": datetime.now().isoformat()
+                                })
+                                count += 1
+                        
+                        if articles_to_add:
+                            dm.save_articles(articles_to_add)
+                            st.success(f"Added {count} new articles!")
+                            st.rerun()
+                        else:
+                            st.info("No new unique URLs found.")
+                    else:
+                        st.info("Database refreshed. No new URLs.")
+        else:
+            st.warning("⚠️ Sync Unavailable: Not connected to Google Sheet")
+            if not has_saved_creds:
+                st.caption("Reason: No credentials saved.")
+            elif not sheet_name:
+                st.caption("Reason: No sheet name provided.")
+            else:
+                st.caption("Reason: Authentication failed (check sidebar).")
 
     # --- Queue Processing Logic ---
     if st.session_state.get("is_reanalyzing", False):
