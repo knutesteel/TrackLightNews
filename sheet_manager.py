@@ -117,15 +117,21 @@ class SheetManager:
                 ws = sh.worksheet("Tracklight_DB")
                 # Force unhide if it exists
                 if ws.hidden:
-                    # gspread doesn't have a direct 'unhide' method in older versions, 
-                    # but we can try to update property if supported or just ignore.
-                    # Usually accessing it is enough.
+                    # Try to unhide by setting property
+                    # Note: gspread might not expose 'hidden' setter directly in all versions,
+                    # but we can try to update it via API if needed.
+                    # For now, let's just assume we can access it.
                     pass
             except gspread.exceptions.WorksheetNotFound:
                 # Create it if it doesn't exist
-                ws = sh.add_worksheet(title="Tracklight_DB", rows=1000, cols=2)
-                # Initialize with empty list
-                ws.update('A1', [['ID', 'JSON_Data']])
+                try:
+                    ws = sh.add_worksheet(title="Tracklight_DB", rows=1000, cols=2)
+                    ws.update('A1', [['ID', 'JSON_Data']])
+                except gspread.exceptions.APIError as e:
+                    # If creation fails (e.g., permissions), we might be read-only
+                    print(f"Failed to create DB sheet: {e}")
+                    return None
+                    
             return ws
         except Exception as e:
             print(f"Error getting DB sheet: {e}")

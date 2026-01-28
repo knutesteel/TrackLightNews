@@ -698,8 +698,13 @@ def dashboard_page(api_key, sheet_name, saved_creds_file, has_saved_creds, email
                 success, msg = sm.authenticate(creds)
                 if success:
                     st.sidebar.success("Auth Success")
-                    dm.set_backend(sm, sheet_name)
-                    is_sheet_connected = True
+                    # Try to set backend immediately to trigger sheet creation
+                    try:
+                        dm.set_backend(sm, sheet_name)
+                        is_sheet_connected = True
+                        st.sidebar.success("DB Connected")
+                    except Exception as e:
+                        st.sidebar.error(f"DB Error: {e}")
                 else:
                     st.sidebar.error(f"Sheet Auth Error: {msg}")
             else:
