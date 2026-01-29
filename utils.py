@@ -11,9 +11,7 @@ def normalize_analysis(data):
             "prevention_strategies",
             "discovery_questions",
             "organizations_involved",
-            "allegations",
-            "current_situation",
-            "next_steps",
+            "tl_dr",
         ]
         for key in list_fields:
             val = data.get(key)

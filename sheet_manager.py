@@ -18,6 +18,7 @@ class SheetManager:
         """
         try:
             self.creds = Credentials.from_service_account_info(creds_json_content, scopes=self.scope)
+            self.service_email = self.creds.service_account_email
             self.client = gspread.authorize(self.creds)
             return True, "Authentication successful"
         except Exception as e:
@@ -27,49 +28,53 @@ class SheetManager:
         """
         Fetch URLs from the first column of the sheet that are not in existing_urls.
         Assumes URLs are in Column A.
-        Returns a list of new URLs.
-        
-        sheet_identifier: Can be the Sheet Name (e.g., "My Sheet") OR the Sheet ID (the long string in the URL).
+        Returns (new_urls, error_msg, stats_dict).
         """
+        stats = {"total_rows": 0, "valid_urls": 0, "duplicates": 0, "new": 0}
+        
         if not self.client:
-            return [], "Not authenticated"
+            return [], "Not authenticated", stats
             
+        sheet_identifier = sheet_identifier.strip()
+        
         try:
             # Try to open the sheet by key (ID) first, then by name
             try:
-                # Check if it looks like an ID (long alphanumeric string) or Name
-                # A simple heuristic: IDs don't usually have spaces, Names often do.
-                # But safer is to just try open_by_key first if it looks like an ID, else open.
-                
-                # However, the user might paste the whole URL. Let's handle that.
                 if "docs.google.com" in sheet_identifier:
                      sheet = self.client.open_by_url(sheet_identifier).sheet1
                 else:
-                    # Try opening by key (assuming it's an ID)
                     try:
                          sheet = self.client.open_by_key(sheet_identifier).sheet1
                     except gspread.exceptions.APIError:
-                        # If key fails (e.g. it's actually a name), try by name
                         sheet = self.client.open(sheet_identifier).sheet1
                         
             except gspread.exceptions.SpreadsheetNotFound:
-                return [], f"Spreadsheet '{sheet_identifier}' not found. Please check the Name/ID/URL and ensure it is shared with the service account email."
+                email_msg = f" Ensure it is shared with: {self.service_email}" if hasattr(self, 'service_email') else ""
+                return [], f"Spreadsheet '{sheet_identifier}' not found. Please check the Name/ID/URL.{email_msg}", stats
             except gspread.exceptions.APIError as e:
-                return [], f"Google API Error: {e.response.text if hasattr(e, 'response') else str(e)}"
+                return [], f"Google API Error: {e.response.text if hasattr(e, 'response') else str(e)}", stats
                 
-            # Get all values from column A (assuming URLs are there)
-            # Use col_values(1) which gets the entire column
+            # Get all values from column A
             urls = sheet.col_values(1)
+            stats["total_rows"] = len(urls)
             
             # Filter out headers if "http" is not in the string or it's empty
             valid_urls = [url.strip() for url in urls if url.strip().startswith("http")]
+            stats["valid_urls"] = len(valid_urls)
             
             # Find new ones
-            new_urls = [url for url in valid_urls if url not in existing_urls]
+            new_urls = []
+            for url in valid_urls:
+                if url not in existing_urls:
+                    new_urls.append(url)
+                else:
+                    stats["duplicates"] += 1
             
-            return new_urls, None
+            stats["new"] = len(new_urls)
+            
+            return new_urls, None, stats
         except Exception as e:
-            return [], f"Error accessing sheet: {str(e)}"
+            return [], f"Error accessing sheet: {str(e)}", stats
 
     def get_urls(self, sheet_identifier):
         """
@@ -78,6 +83,9 @@ class SheetManager:
         """
         if not self.client:
             return [], "Not authenticated"
+        
+        sheet_identifier = sheet_identifier.strip()
+        
         try:
             if "docs.google.com" in sheet_identifier:
                  sheet = self.client.open_by_url(sheet_identifier).sheet1
@@ -90,7 +98,8 @@ class SheetManager:
             valid_urls = [url.strip() for url in urls if url.strip().startswith("http")]
             return valid_urls, None
         except gspread.exceptions.SpreadsheetNotFound:
-            return [], f"Spreadsheet '{sheet_identifier}' not found. Please check the Name/ID/URL and ensure it is shared with the service account email."
+            email_msg = f" Ensure it is shared with: {self.service_email}" if hasattr(self, 'service_email') else ""
+            return [], f"Spreadsheet '{sheet_identifier}' not found. Please check the Name/ID/URL.{email_msg}"
         except gspread.exceptions.APIError as e:
             return [], f"Google API Error: {e.response.text if hasattr(e, 'response') else str(e)}"
         except Exception as e:
@@ -102,6 +111,8 @@ class SheetManager:
         if not self.client:
             return None
             
+        sheet_identifier = sheet_identifier.strip()
+        
         try:
             # Open the spreadsheet
             if "docs.google.com" in sheet_identifier:
@@ -115,27 +126,24 @@ class SheetManager:
             # Try to get the worksheet
             try:
                 ws = sh.worksheet("Tracklight_DB")
-                # Force unhide if it exists
-                if ws.hidden:
-                    # Try to unhide by setting property
-                    # Note: gspread might not expose 'hidden' setter directly in all versions,
-                    # but we can try to update it via API if needed.
-                    # For now, let's just assume we can access it.
-                    pass
+                # Found it
             except gspread.exceptions.WorksheetNotFound:
                 # Create it if it doesn't exist
                 try:
-                    ws = sh.add_worksheet(title="Tracklight_DB", rows=1000, cols=2)
-                    ws.update('A1', [['ID', 'JSON_Data']])
+                    ws = sh.add_worksheet(title="Tracklight_DB", rows=1000, cols=4)
+                    ws.update('A1', [['ID', 'JSON_Data', 'Article_Title', 'TLDR']])
                 except gspread.exceptions.APIError as e:
                     # If creation fails (e.g., permissions), we might be read-only
                     print(f"Failed to create DB sheet: {e}")
-                    return None
+                    raise Exception(f"Failed to create 'Tracklight_DB' sheet. Ensure the service account has EDIT permissions. Error: {e}")
                     
             return ws
+        except gspread.exceptions.SpreadsheetNotFound:
+            email_msg = f" Ensure it is shared with: {self.service_email}" if hasattr(self, 'service_email') else ""
+            raise Exception(f"Spreadsheet '{sheet_identifier}' not found. Please check the Name/ID/URL.{email_msg}")
         except Exception as e:
             print(f"Error getting DB sheet: {e}")
-            return None
+            raise e
 
     def load_db(self, sheet_identifier):
         """
@@ -146,6 +154,7 @@ class SheetManager:
     def save_db(self, sheet_identifier, articles):
         """
         Saves all articles to Tracklight_DB worksheet (overwrite).
+        Columns: ID, JSON_Data, Article_Title, TLDR
         """
         ws = self._get_db_sheet(sheet_identifier)
         if not ws:
@@ -167,14 +176,30 @@ class SheetManager:
             # Let's rewrite:
             # Clear sheet
             ws.clear()
-            ws.update('A1', [['ID', 'JSON_Data']])
+            # Added Title and TLDR columns
+            ws.update('A1', [['ID', 'JSON_Data', 'Article_Title', 'TLDR']])
             
             rows = []
             for art in articles:
-                rows.append([str(art.get('id', '')), json.dumps(art)])
+                # Prepare safe strings for Title and TLDR
+                title = art.get('article_title', '') or ""
+                tldr = art.get('tl_dr', '') or ""
+                
+                # Convert list to string for the cell
+                if isinstance(tldr, list):
+                    tldr = "\n".join(tldr)
+                
+                if len(tldr) > 4000: tldr = tldr[:4000] # Cell limit safety
+                
+                rows.append([
+                    str(art.get('id', '')), 
+                    json.dumps(art),
+                    title,
+                    tldr
+                ])
             
             if rows:
-                ws.update(f'A2:B{len(rows)+1}', rows)
+                ws.update(f'A2:D{len(rows)+1}', rows)
                 
             return True, "Saved"
         except Exception as e:
@@ -213,65 +238,3 @@ class SheetManager:
         For now, just a placeholder if needed later.
         """
         pass
-
-    # --- Database Persistence Methods ---
-    def _get_db_sheet(self, sheet_identifier):
-        if not self.client: return None
-        try:
-            # Open the spreadsheet
-            if "docs.google.com" in sheet_identifier:
-                 sh = self.client.open_by_url(sheet_identifier)
-            else:
-                try:
-                     sh = self.client.open_by_key(sheet_identifier)
-                except gspread.exceptions.APIError:
-                    sh = self.client.open(sheet_identifier)
-            
-            # Look for 'Tracklight_DB' worksheet
-            try:
-                ws = sh.worksheet("Tracklight_DB")
-            except gspread.exceptions.WorksheetNotFound:
-                # Create it
-                ws = sh.add_worksheet(title="Tracklight_DB", rows=1000, cols=2)
-                ws.append_row(["id", "json_data"])
-            return ws
-        except Exception:
-            return None
-
-    def load_db(self, sheet_identifier):
-        """Loads all articles from Tracklight_DB worksheet."""
-        ws = self._get_db_sheet(sheet_identifier)
-        if not ws: return []
-        
-        try:
-            # Get all values (skipping header)
-            rows = ws.get_all_values()
-            if len(rows) < 2: return []
-            
-            articles = []
-            for r in rows[1:]: # Skip header
-                if len(r) >= 2:
-                    try:
-                        articles.append(json.loads(r[1]))
-                    except: pass
-            return articles
-        except Exception:
-            return []
-
-    def save_db(self, sheet_identifier, articles):
-        """Saves all articles to Tracklight_DB worksheet (overwrite)."""
-        ws = self._get_db_sheet(sheet_identifier)
-        if not ws: return False
-        
-        try:
-            # Prepare rows
-            rows = [["id", "json_data"]]
-            for a in articles:
-                rows.append([str(a.get("id", "")), json.dumps(a)])
-            
-            # Clear and write
-            ws.clear()
-            ws.update(rows)
-            return True
-        except Exception:
-            return False

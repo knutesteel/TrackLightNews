@@ -1,0 +1,145 @@
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'email_manager.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/.gitignore b/.gitignore[m
+[1mindex f45dfc3..282c501 100644[m
+[1m--- a/.gitignore[m
+[1m+++ b/.gitignore[m
+[36m@@ -1,13 +1,9 @@[m
+[31m-# Environment variables (API keys, etc.)[m
+ .env[m
+[31m-[m
+[31m-# Python cache[m
+[32m+[m[32mgoogle_creds.json[m
+ __pycache__/[m
+ *.pyc[m
+[31m-[m
+[31m-# Data files (optional, but recommended to keep data local)[m
+[31m-articles_data.json[m
+[31m-preferences.json[m
+[31m-[m
+[31m-# Credentials[m
+[31m-google_creds.json[m
+[32m+[m[32m.DS_Store[m
+[32m+[m[32m.streamlit/secrets.toml[m
+[32m+[m[32mvenv/[m
+[32m+[m[32m.idea/[m
+[32m+[m[32m.vscode/[m
+[1mdiff --git a/app.py b/app.py[m
+[1mindex 002614f..3d4572e 100644[m
+[1m--- a/app.py[m
+[1m+++ b/app.py[m
+[36m@@ -253,6 +253,16 @@[m [mdef get_config(key, default=""):[m
+         [m
+     return default[m
+ [m
+[32m+[m[32mdef mark_url_deleted(url):[m
+[32m+[m[32m    if not url:[m
+[32m+[m[32m        return[m
+[32m+[m[32m    prefs = dm.get_preferences()[m
+[32m+[m[32m    deleted = prefs.get("deleted_urls", [])[m
+[32m+[m[32m    if url not in deleted:[m
+[32m+[m[32m        deleted.append(url)[m
+[32m+[m[32m        prefs["deleted_urls"] = deleted[m
+[32m+[m[32m        dm.save_preferences(prefs)[m
+[32m+[m
+ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):[m
+     try:[m
+         if not email_user or not email_pass:[m
+[36m@@ -273,6 +283,7 @@[m [mdef maybe_auto_check_email(email_user, email_pass, api_key, force=False):[m
+             em = EmailManager(email_user, email_pass)[m
+             prefs = dm.get_preferences()[m
+             blocked = prefs.get("blocked_domains", [])[m
+[32m+[m[32m            deleted_urls = set(prefs.get("deleted_urls", []))[m
+             [m
+             links = em.fetch_new_links(blocked_domains=blocked)[m
+             [m
+[36m@@ -296,7 +307,7 @@[m [mdef maybe_auto_check_email(email_user, email_pass, api_key, force=False):[m
+ [m
+             articles = dm.get_all_articles()[m
+             existing_urls = {a.get("url") for a in articles if a.get("url")}[m
+[31m-            new_links = [l for l in links if l not in existing_urls][m
+[32m+[m[32m            new_links = [l for l in links if l not in existing_urls and l not in deleted_urls][m
+ [m
+             if not new_links:[m
+                 if force:[m
+[36m@@ -308,51 +319,75 @@[m [mdef maybe_auto_check_email(email_user, email_pass, api_key, force=False):[m
+             added_count = 0[m
+             [m
+             for i, url in enumerate(new_links):[m
+[31m-                # ... (same logic as before) ...[m
+[32m+[m[32m                article_start = datetime.now()[m
+[32m+[m[32m                if "favicon" in url.lower():[m
+[32m+[m[32m                    continue[m
+                 new_art = {[m
+                     "url": url,[m
+                     "status": "In Process",[m
+                     "article_title": "Analyzing...",[m
+[31m-                    "added_at": datetime.now().isoformat()[m
+[32m+[m[32m                    "added_at": datetime.now().isoformat(),[m
+[32m+[m[32m                    "source": "email"[m
+                 }[m
+                 saved_art = dm.save_article(new_art)[m
+[31m-                [m
+[32m+[m[32m                added_ok = False[m
+[32m+[m
+                 txt = scrape_article(url)[m
+[32m+[m[32m                elapsed = (datetime.now() - article_start).total_seconds()[m
+[32m+[m[32m                if elapsed > 60:[m
+[32m+[m[32m                    dm.delete_article(saved_art["id"])[m
+[32m+[m[32m                    if force:[m
+[32m+[m[32m                        st.warning(f"Timed out while processing: {url}")[m
+[32m+[m[32m                    progress_bar.progress((i + 1) / len(new_links))[m
+[32m+[m[32m                    continue[m
+[32m+[m
+                 if isinstance(txt, str) and txt.startswith("Error"):[m
+[31m-                    dm.update_article(saved_art["id"], {[m
+[31m-                        "last_error": txt, [m
+[31m-                        "status": "Error",[m
+[31m-                        "tl_dr": "Unknown - Bad Link?"[m
+[31m-                    })[m
+[32m+[m[32m                    dm.update_article(saved_art["id"], {"last_error": txt, "status": "Error"})[m
+                 else:[m
+                     if api_key:[m
+                         res = analyze_with_chatgpt(txt, api_key)[m
+[32m+[m[32m                        elapsed = (datetime.now() - article_start).total_seconds()[m
+[32m+[m[32m                        if elapsed > 60:[m
+[32m+[m[32m                            dm.delete_article(saved_art["id"])[m
+[32m+[m[32m                            if force:[m
+[32m+[m[32m                                st.warning(f"Timed out while processing: {url}")[m
+[32m+[m[32m                            progress_bar.progress((i + 1) / len(new_links))[m
+[32m+[m[32m                            continue[m
+                         if isinstance(res, str) and res.startswith("Error"):[m
+                             dm.update_article(saved_art["id"], {"last_error": res, "status": "Not Started"})[m
+                         else:[m
+                             try:[m
+                                 data = json.loads(res)[m
+                                 data = normalize_analysis(data)[m
+[31m-                                updates = {[m
+[31m-                                    "status": "Not Started",[m
+[31m-                                    "article_title": data.get("article_title", "Unknown Title"),[m
+[31m-                                    "date": data.get("date"),[m
+[31m-                                    "date_verification": data.get("date_verification"),[m
+[31m-                                    "fraud_indicator": data.get("fraud_indicator"),[m
+[31m-                                    "tl_dr": data.get("tl_dr", data.get("summary")),[m
+[31m-                                    "full_summary_bullets": data.get("full_summary_bullets"),[m
+[31m-                                    "people_mentioned": data.get("people_mentioned"),[m
+[31m-                                    "prevention_strategies": data.get("prevention_strategies", data.get("prevention")),[m
+[31m-                                    "discovery_questions": data.get("discovery_questions"),[m
+[31m-                                    "last_error": ""[m
+[31m-                                }[m
+[31m-                                dm.update_article(saved_art["id"], updates)[m
+[32m+[m[32m                                tl_val = data.get("tl_dr", data.get("summary", ""))[m
+[32m+[m[32m                                if isinstance(tl_val, str) and tl_val.strip() == "Unknown - Bad Link?":[m
+[32m+[m[32m                                    mark_url_deleted(url)[m
+[32m+[m[32m                                    dm.delete_article(saved_art["id"])[m
+[32m+[m[32m                                    if force:[m
+[32m+[m[32m                                        st.warning(f"Skipped (Bad Link): {url}")[m
+[32m+[m[32m                                else:[m
+[32m+[m[32m                                    updates = {[m
+[32m+[m[32m                                        "status": "Not Started",[m
+[32m+[m[32m                                        "article_title": data.get("article_title", "Unknown Title"),[m
+[32m+[m[32m                                        "date": data.get("date"),[m
+[32m+[m[32m                                        "date_verification": data.get("date_verification"),[m
+[32m+[m[32m                                        "fraud_indicator": data.get("fraud_indicator"),[m
+[32m+[m[32m                                        "tl_dr": data.get("tl_dr", data.get("summary")
