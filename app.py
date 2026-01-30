@@ -789,7 +789,7 @@ else:
                 article = current_article
                 sel_id = selected_id
                 
-                # Header with Fraud Indicator
+                # Header
                 fi = article.get("fraud_indicator")
                 if fi:
                     fi_color = "red" if fi == "High" else "orange" if fi == "Medium" else "green"
@@ -798,84 +798,140 @@ else:
                     st.header(article.get("article_title"))
                 st.caption(f"URL: {article.get('url')}")
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    current_status = article.get("status", "Not Started")
-                    # Normalize for dropdown
-                    if current_status == "In Progress": current_status = "In Process"
-                    if current_status == "Done": current_status = "Complete"
-                    
-                    status_opts = ["Not Started", "In Process", "Complete", "Deleted"]
+                # --- Sticky Navigation & Actions Toolbar ---
+                st.markdown('<div id="sticky-marker"></div>', unsafe_allow_html=True)
+                with st.container():
+                    # Calculate IDs for Navigation
+                    active_ids = [a["id"] for a in active_articles]
                     try:
-                        idx = status_opts.index(current_status)
-                    except ValueError:
-                        idx = 0
-                        
-                    new_status = st.selectbox("Status", status_opts, index=idx)
-                    if new_status != current_status:
-                        dm.update_article(sel_id, {"status": new_status})
-                        st.rerun()
-                
-                with col2:
-                    if st.button("🗑️ Delete Article"):
-                        dm.update_article(sel_id, {"status": "Deleted"})
-                        st.rerun()
+                        curr_idx = active_ids.index(sel_id)
+                    except:
+                        curr_idx = 0
+                    
+                    prev_id = active_ids[curr_idx - 1] if curr_idx > 0 else None
+                    next_id = active_ids[curr_idx + 1] if curr_idx < len(active_ids) - 1 else None
 
-                # Analysis Section
-                st.markdown("### Analysis")
-                if st.button("🔍 Analyze Article"):
-                    if not api_key:
-                        st.error("API Key required.")
-                    else:
-                        with st.spinner("Scraping and Analyzing..."):
-                            # Scrape
-                            content, err = scrape_article(article.get("url"))
-                            if err:
-                                st.error(err)
+                    # Toolbar Layout: [Prev] [Next] [Analyze URL] [Analyze Text] [Delete] [Status]
+                    t1, t2, t3, t4, t5, t6 = st.columns([0.6, 0.6, 1.3, 1.3, 0.6, 2])
+                    
+                    with t1:
+                        if st.button("⬅️", disabled=(prev_id is None), help="Previous Article"):
+                            st.session_state["selected_article_id"] = prev_id
+                            st.rerun()
+                    with t2:
+                        if st.button("➡️", disabled=(next_id is None), help="Next Article"):
+                            st.session_state["selected_article_id"] = next_id
+                            st.rerun()
+                    
+                    with t3:
+                        analyze_url_clicked = st.button("Analyze URL", help="Scrape and analyze the URL")
+                        
+                    with t4:
+                        if st.button("Analyze Text", help="Manually paste text to analyze"):
+                            st.session_state[f"show_text_input_{sel_id}"] = not st.session_state.get(f"show_text_input_{sel_id}", False)
+                            st.rerun()
+
+                    with t5:
+                        if st.button("🗑️", help="Delete Article"):
+                            dm.update_article(sel_id, {"status": "Deleted"})
+                            # Try to go to next, else prev, else dashboard
+                            new_id = next_id if next_id else prev_id
+                            if new_id:
+                                st.session_state["selected_article_id"] = new_id
                             else:
-                                # Update article with content
-                                dm.update_article(sel_id, {"scraped_text": content["text"], "article_title": content["title"]})
-                                
-                                # Analyze
-                                prompt = f"""
-                                Analyze this article for fraud prevention insights.
-                                Title: {content['title']}
-                                Text: {content['text'][:15000]}
-                                
-                                Return a JSON object with:
-                                - tl_dr (list of strings): 5 to 10 of the most relevant points.
-                                - summary (string): Narrative summary, up to 5 paragraphs.
-                                - organizations_involved (list of objects): Each with 'name' and 'role_summary'. Identify all companies and government organizations.
-                                - allegations (string): Details on what types of fraud occurred or allegedly occurred.
-                                - current_situation (string): Have there been arrests, convictions, plea bargains, or other resolutions?
-                                - next_steps (string): Information on what happens next.
-                                - prevention_strategies (list of objects): Each with 'issue' and 'prevention'.
-                                - fraud_indicator (High/Medium/Low): Overall risk level.
-                                - discovery_questions (list of strings): 3-5 questions to ask clients.
-                                - date (YYYY-MM-DD if found)
-                                """
-                                
-                                try:
-                                    client = openai.OpenAI(api_key=api_key)
-                                    response = client.chat.completions.create(
-                                        model="gpt-4o",
-                                        messages=[
-                                            {"role": "system", "content": "You are a fraud analyst. Output JSON."},
-                                            {"role": "user", "content": prompt}
-                                        ],
-                                        response_format={"type": "json_object"}
-                                    )
-                                    analysis = json.loads(response.choices[0].message.content)
-                                    analysis = normalize_analysis(analysis)
-                                    
-                                    # Merge into article
-                                    dm.update_article(sel_id, {
-                                        **analysis
-                                    })
-                                    st.success("Analysis complete!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Analysis failed: {e}")
+                                st.session_state["current_view"] = "dashboard"
+                            st.rerun()
+                            
+                    with t6:
+                        # Status
+                        current_status = article.get("status", "Not Started")
+                        # Normalize
+                        if current_status == "In Progress": current_status = "In Process"
+                        if current_status == "Done": current_status = "Complete"
+                        status_opts = ["Not Started", "In Process", "Complete", "Deleted"]
+                        try:
+                            idx = status_opts.index(current_status)
+                        except ValueError:
+                            idx = 0
+                        new_st = st.selectbox("Status", status_opts, index=idx, key=f"status_detail_{sel_id}", label_visibility="collapsed")
+                        if new_st != current_status:
+                            dm.update_article(sel_id, {"status": new_st})
+                            st.rerun()
+                    
+                    st.divider()
+
+                # --- Analysis Logic ---
+                do_analysis = False
+                analysis_text = ""
+                analysis_title = article.get("article_title", "Unknown")
+                
+                # 1. Manual Text Input
+                if st.session_state.get(f"show_text_input_{sel_id}", False):
+                    with st.form("manual_text_form"):
+                        st.markdown("### Paste Article Text")
+                        txt_input = st.text_area("Text Content", value=article.get("scraped_text", ""), height=300)
+                        if st.form_submit_button("Run Analysis on Text"):
+                            analysis_text = txt_input
+                            analysis_title = article.get("article_title") # Keep existing title or ask?
+                            dm.update_article(sel_id, {"scraped_text": analysis_text})
+                            do_analysis = True
+                
+                # 2. URL Scrape Trigger
+                if analyze_url_clicked:
+                    with st.spinner("Scraping..."):
+                        content, err = scrape_article(article.get("url"))
+                        if err:
+                            st.error(err)
+                        else:
+                            analysis_text = content["text"]
+                            analysis_title = content["title"]
+                            dm.update_article(sel_id, {"scraped_text": analysis_text, "article_title": analysis_title})
+                            do_analysis = True
+
+                # 3. Perform Analysis if triggered
+                if do_analysis and api_key:
+                     with st.spinner("Analyzing with GPT-4o..."):
+                        prompt = f"""
+                        Analyze this article for fraud prevention insights.
+                        Title: {analysis_title}
+                        Text: {analysis_text[:15000]}
+                        
+                        Return a JSON object with:
+                        - tl_dr (list of strings): 5 to 10 of the most relevant points.
+                        - summary (string): Narrative summary, up to 5 paragraphs.
+                        - organizations_involved (list of objects): Each with 'name' and 'role_summary'. Identify all companies and government organizations.
+                        - allegations (string): Details on what types of fraud occurred or allegedly occurred.
+                        - current_situation (string): Have there been arrests, convictions, plea bargains, or other resolutions?
+                        - next_steps (string): Information on what happens next.
+                        - prevention_strategies (list of objects): Each with 'issue' and 'prevention'.
+                        - fraud_indicator (High/Medium/Low): Overall risk level.
+                        - discovery_questions (list of strings): 3-5 questions to ask clients.
+                        - date (YYYY-MM-DD if found)
+                        """
+                        try:
+                            client = openai.OpenAI(api_key=api_key)
+                            response = client.chat.completions.create(
+                                model="gpt-4o",
+                                messages=[
+                                    {"role": "system", "content": "You are a fraud analyst. Output JSON."},
+                                    {"role": "user", "content": prompt}
+                                ],
+                                response_format={"type": "json_object"}
+                            )
+                            analysis = json.loads(response.choices[0].message.content)
+                            analysis = normalize_analysis(analysis)
+                            
+                            # Merge into article
+                            dm.update_article(sel_id, {
+                                **analysis
+                            })
+                            st.success("Analysis complete!")
+                            st.session_state[f"show_text_input_{sel_id}"] = False # Hide input after success
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Analysis failed: {e}")
+                elif do_analysis and not api_key:
+                    st.error("Please enter API Key in sidebar.")
 
                 # Display Analysis Results
                 if article.get("tl_dr") or article.get("summary"):
