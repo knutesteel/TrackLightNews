@@ -178,6 +178,15 @@ class DataManager:
             self.articles_cache = [a for a in self.articles_cache if a["id"] != article_id]
             self._save()
 
+    def clear_all_articles(self):
+        """
+        Delete ALL articles from local cache and remote DB.
+        Does NOT add them to blacklist.
+        Used for hard resets.
+        """
+        self.articles_cache = []
+        self._save()
+
     def _save(self):
         # Save locally
         self._save_to_local(self.articles_cache)

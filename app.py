@@ -950,6 +950,17 @@ else:
                             count += 1
                         st.success(f"Deleted {count} articles.")
                         st.rerun()
+
+            st.divider()
+            st.markdown("**⚠️ Danger Zone**")
+            col_danger_1, col_danger_2 = st.columns([3, 1])
+            with col_danger_1:
+                st.warning("This will delete ALL articles from the database. They will NOT be blacklisted, so you can re-import them.")
+            with col_danger_2:
+                if st.button("RESET DATABASE", type="primary"):
+                    dm.clear_all_articles()
+                    st.success("Database cleared!")
+                    st.rerun()
         
         filtered = active_articles
         if search:
