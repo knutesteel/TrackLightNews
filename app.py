@@ -775,26 +775,20 @@ else:
         if not active_articles:
              st.info("No articles available.")
         else:
-             # Find selected article
-             selected_id = st.session_state.get("selected_article_id")
-             # Validate if it still exists
-             current_article = next((a for a in active_articles if a["id"] == selected_id), None)
-             
-             if not current_article:
-                 st.warning("Selected article not found (it may have been deleted).")
-                 st.session_state["current_view"] = "dashboard"
-                 st.rerun()
-             else:
-                 # Set 'article' for the rest of the logic
-                 article = current_article
-                 sel_id = selected_id
-                 
-                 # --- Article Details View ---
-                st.session_state["selected_article_id"] = sel_id
-
-            article = next((a for a in active_articles if a["id"] == sel_id), None)
+            # Find selected article
+            selected_id = st.session_state.get("selected_article_id")
+            # Validate if it still exists
+            current_article = next((a for a in active_articles if a["id"] == selected_id), None)
             
-            if article:
+            if not current_article:
+                st.warning("Selected article not found (it may have been deleted).")
+                st.session_state["current_view"] = "dashboard"
+                st.rerun()
+            else:
+                # Set 'article' for the rest of the logic
+                article = current_article
+                sel_id = selected_id
+                
                 # Header with Fraud Indicator
                 fi = article.get("fraud_indicator")
                 if fi:
