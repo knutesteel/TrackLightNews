@@ -362,7 +362,7 @@ with st.sidebar:
     st.subheader("Google Sheets Integration")
     st.caption("Auto-load URLs from a Google Sheet.")
     
-    sheet_name = st.text_input("Google Sheet Name / ID / URL", value=get_config("GOOGLE_SHEET_NAME", ""), help="You can enter the exact Name, the Sheet ID, or the full URL.")
+    sheet_name = st.text_input("Google Sheet Name / ID / URL", value=get_config("GOOGLE_SHEET_NAME", ""), key="sheet_url_input_v2", help="You can enter the exact Name, the Sheet ID, or the full URL.")
     
     saved_creds_file = "google_creds.json"
     has_saved_creds = os.path.exists(saved_creds_file)
@@ -704,6 +704,7 @@ else:
                     tldr = "; ".join(tldr)
                 
                 data_for_df.append({
+                    "Select": False,
                     "id": a.get("id"),
                     "Status": s,
                     "Title": a.get("article_title", "Untitled"),
@@ -720,6 +721,7 @@ else:
                 df,
                 key=editor_key,
                 column_config={
+                    "Select": st.column_config.CheckboxColumn("View", width="small", help="Check to view details"),
                     "id": None, # Hidden
                     "full_obj": None, # Hidden
                     "Status": st.column_config.SelectboxColumn(
@@ -730,8 +732,7 @@ else:
                     ),
                     "Title": st.column_config.TextColumn(
                         "Title",
-                        width="large",
-                        help="Select row to view details"
+                        width="large"
                     ),
                     "TL;DR": st.column_config.TextColumn(
                         "TL;DR",
@@ -740,9 +741,7 @@ else:
                 },
                 hide_index=True,
                 use_container_width=True,
-                disabled=["Title", "TL;DR"],
-                selection_mode="single-row",
-                on_select="rerun"
+                disabled=["Title", "TL;DR"]
             )
             
             # Handle Status Changes
@@ -763,13 +762,16 @@ else:
                         dm.update_article(art_id, {"status": new_status})
                         st.toast(f"Updated status for '{row['Title']}'")
             
-            # Handle Selection for Navigation
-            if editor_key in st.session_state and st.session_state[editor_key].get("selection", {}).get("rows"):
-                sel_idx = st.session_state[editor_key]["selection"]["rows"][0]
-                if sel_idx < len(df):
-                    selected_id = df.iloc[sel_idx]["id"]
+            # Handle Selection for Navigation (via Checkbox)
+            selected_rows = edited_df[edited_df["Select"] == True]
+            if not selected_rows.empty:
+                # Take the last checked item as the selection
+                sel_row = selected_rows.iloc[-1]
+                selected_id = sel_row["id"]
+                
+                if st.session_state.get("selected_article_id") != selected_id:
                     st.session_state["selected_article_id"] = selected_id
-                    st.info(f"Selected '{df.iloc[sel_idx]['Title']}'. Switch to 'Article Details' tab to view.")
+                    st.info(f"Selected '{sel_row['Title']}'. Switch to 'Article Details' tab to view.")
 
         else:
             st.info("No articles found.")
