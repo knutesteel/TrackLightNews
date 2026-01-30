@@ -87,6 +87,7 @@ def analyze_content(text, title, api_key):
     Text: {text[:15000]}
     
     Return a JSON object with:
+    - article_title (string): A concise, descriptive headline for this article.
     - tl_dr (list of strings): 5 to 10 of the most relevant points.
     - summary (string): Narrative summary, up to 5 paragraphs.
     - organizations_involved (list of objects): Each with 'name', 'role_summary', and 'people' (list of objects, each with 'name' and 'role'). Identify all companies and government organizations and the key people associated with them.
@@ -1055,11 +1056,21 @@ else:
                 
                 # Header
                 fi = article.get("fraud_indicator")
-                if fi:
-                    fi_color = "red" if fi == "High" else "orange" if fi == "Medium" else "green"
-                    st.markdown(f"## {article.get('article_title')} <span style='color:{fi_color}; font-size:0.5em; border:1px solid {fi_color}; padding:2px 5px; border-radius:5px; vertical-align: middle;'>{fi.upper()}</span>", unsafe_allow_html=True)
-                else:
-                    st.header(article.get("article_title"))
+                
+                # Editable Title
+                col_t1, col_t2 = st.columns([4, 1])
+                with col_t1:
+                     new_title = st.text_input("Article Title", value=article.get("article_title", "Untitled"), key=f"title_edit_{sel_id}", label_visibility="collapsed")
+                     if new_title != article.get("article_title"):
+                         dm.update_article(sel_id, {"article_title": new_title})
+                         st.rerun()
+                
+                with col_t2:
+                     # Display Fraud Indicator Badge next to title if exists
+                     if fi:
+                        fi_color = "red" if fi == "High" else "orange" if fi == "Medium" else "green"
+                        st.markdown(f"<div style='text-align:right; padding-top: 5px;'><span style='color:{fi_color}; font-size:1em; border:1px solid {fi_color}; padding:5px 10px; border-radius:5px;'>{fi.upper()}</span></div>", unsafe_allow_html=True)
+
                 st.caption(f"URL: {article.get('url')}")
                 
                 # --- Sticky Navigation & Actions Toolbar ---
@@ -1157,12 +1168,21 @@ else:
                 if do_analysis and api_key:
                      with st.spinner("Analyzing with GPT-4o..."):
                         try:
+                            # Use current title for context, but allow GPT to override if it finds a better one
                             analysis = analyze_content(analysis_text, analysis_title, api_key)
                             
                             # Merge into article
-                            dm.update_article(sel_id, {
-                                **analysis
-                            })
+                            update_payload = {**analysis}
+                            
+                            # Ensure we prioritize the scraped title if available, or GPT title if it's better than "Processing..."
+                            # If GPT returns a title, use it, but maybe respect manual edits?
+                            # User asked: "if an article fails... update the Title and TLDR on the dashboard"
+                            # So we should trust the new analysis title.
+                            
+                            if "article_title" not in update_payload and analysis_title and analysis_title != "Processing...":
+                                update_payload["article_title"] = analysis_title
+                            
+                            dm.update_article(sel_id, update_payload)
                             st.success("Analysis complete!")
                             st.session_state[f"show_text_input_{sel_id}"] = False # Hide input after success
                             st.rerun()
