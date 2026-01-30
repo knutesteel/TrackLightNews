@@ -74,6 +74,45 @@ def analyze_global_summary(articles, api_key):
     except Exception as e:
         return f"Error: {str(e)}"
 
+def analyze_content(text, title, api_key):
+    """
+    Analyzes the provided text using GPT-4o and returns the structured JSON analysis.
+    """
+    if not api_key:
+        raise ValueError("API Key is missing.")
+        
+    prompt = f"""
+    Analyze this article for fraud prevention insights.
+    Title: {title}
+    Text: {text[:15000]}
+    
+    Return a JSON object with:
+    - tl_dr (list of strings): 5 to 10 of the most relevant points.
+    - summary (string): Narrative summary, up to 5 paragraphs.
+    - organizations_involved (list of objects): Each with 'name' and 'role_summary'. Identify all companies and government organizations.
+    - allegations (string): Details on what types of fraud occurred or allegedly occurred.
+    - current_situation (string): Have there been arrests, convictions, plea bargains, or other resolutions?
+    - next_steps (string): Information on what happens next.
+    - prevention_strategies (list of objects): Each with 'issue' and 'prevention'.
+    - fraud_indicator (High/Medium/Low): Overall risk level.
+    - discovery_questions (list of strings): 3-5 questions to ask clients.
+    - date (YYYY-MM-DD if found)
+    """
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a fraud analyst. Output JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        analysis = json.loads(response.choices[0].message.content)
+        return normalize_analysis(analysis)
+    except Exception as e:
+        raise Exception(f"Analysis failed: {e}")
+
 def scrape_article(url):
     try:
         uas = [
@@ -462,48 +501,43 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Tools")
     
-    with st.expander("🗑️ Bulk Delete / Cleanup"):
-        st.caption("Permanently remove articles from the database.")
-        
-        # 1. Purge Soft-Deleted
-        all_articles = dm.get_all_articles()
-        deleted_count = len([a for a in all_articles if a.get("status") == "Deleted"])
-        
-        st.markdown(f"**Soft-Deleted Articles:** {deleted_count}")
-        if deleted_count > 0:
-            if st.button("Purge All Soft-Deleted"):
-                with st.spinner("Purging..."):
-                    to_purge = [a["id"] for a in all_articles if a.get("status") == "Deleted"]
-                    for aid in to_purge:
-                        dm.purge_article(aid)
-                    st.success(f"Purged {len(to_purge)} articles!")
-                    st.rerun()
-        
-        st.divider()
-        
-        # 2. Delete Active
-        st.markdown("**Delete Active Articles**")
-        active_candidates = dm.get_active_articles()
-        
-        if not active_candidates:
-            st.info("No active articles.")
-        else:
-            with st.form("sidebar_bulk_delete"):
-                opts = {f"{a.get('article_title')}": a.get('id') for a in active_candidates}
-                sel = st.multiselect("Select to Delete", options=list(opts.keys()))
-                permanent = st.checkbox("Permanent (Prevent Re-sync)", value=True, help="If checked, the URL will be ignored in future syncs.")
-                
-                if st.form_submit_button("Delete"):
-                    for title in sel:
-                        aid = opts[title]
-                        if permanent:
-                            dm.purge_article(aid)
-                        else:
-                            dm.delete_article(aid, hard=False)
-                    st.success(f"Deleted {len(sel)} articles.")
-                    st.rerun()
+    st.info("Bulk Delete has been moved to the Dashboard tab under 'Advanced Tools'.")
     
+    # Debug Control
+    show_debug = st.checkbox("Show Debug Info", value=st.session_state.get("show_debug", False), key="debug_checkbox_sidebar")
+    st.session_state["show_debug"] = show_debug
+
+    if show_debug:
+        st.divider()
+        st.subheader("🛠️ Debug Info")
+        try:
+            info = dm.get_storage_info()
+            st.json(info)
+            
+            # Show Service Email in Debug too
+            if hasattr(sm, 'service_email') and sm.service_email:
+                st.write(f"**Service Email:** `{sm.service_email}`")
+            elif has_saved_creds:
+                 try:
+                    with open(saved_creds_file, 'r') as f:
+                        saved_c = json.load(f)
+                        st.write(f"**Service Email (from file):** `{saved_c.get('client_email')}`")
+                 except: pass
+
+            # Safe fetch of active articles for debug display
+            debug_active = dm.get_active_articles()
+            st.write(f"Active Articles Count: {len(debug_active)}")
+            if debug_active:
+                st.write("Top 3 Active Articles (Raw):")
+                st.json(debug_active[:3])
+        except Exception as e:
+            st.error(f"Debug Display Error: {e}")
+
     st.markdown("---")
+    
+    # System Info & Debug moved to bottom for visibility
+    # REMOVED: Duplicate Debug Checkbox
+            
     st.markdown("### About Tracklight.ai")
     st.markdown("Prevent fraud before it happens.")
     
@@ -588,7 +622,10 @@ else:
                 if success:
                     # Try to set backend immediately
                     try:
-                        dm.set_backend(sm, sheet_name)
+                        # Don't reload (load=False) on auto-reconnect to preserve local state
+                        # unless the cache is empty
+                        should_load = (len(dm.articles_cache) == 0)
+                        dm.set_backend(sm, sheet_name, load=should_load)
                         is_sheet_connected = True
                     except Exception as e:
                         st.sidebar.error(f"DB Error: {e}")
@@ -606,8 +643,8 @@ else:
             st.caption(f"Syncing with: {sheet_name[:30]}...")
             if st.button("🔄 Sync with Google Sheet", help="Pull new URLs and refresh data"):
                 with st.spinner("Syncing..."):
-                    # Reload DB to get latest changes
-                    dm.set_backend(sm, sheet_name)
+                    # Reload DB to get latest changes (explicit sync)
+                    dm.set_backend(sm, sheet_name, load=True)
                     
                     articles = dm.get_all_articles()
                     existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
@@ -679,44 +716,198 @@ else:
         st.session_state["current_view"] = "dashboard"
         
     active_articles = dm.get_active_articles()
+    
+    # Sort active articles by 'added_at' descending (newest first)
+    active_articles.sort(key=lambda x: x.get("added_at", ""), reverse=True)
 
     if st.session_state["current_view"] == "dashboard":
+        if st.session_state.get("new_article_added"):
+            st.success("✅ New article added! It should appear at the top of the list below.")
+            # Clear flag after showing once
+            st.session_state["new_article_added"] = False
+            
         st.subheader(f"Active Articles ({len(active_articles)})")
         
         # --- Quick Add Inputs ---
-        with st.form("quick_add_form", clear_on_submit=True):
+        with st.form("quick_add_form", clear_on_submit=False):
             qa_c1, qa_c2 = st.columns(2)
             with qa_c1:
-                qa_url = st.text_input("URL to analyze")
+                qa_url = st.text_input("URL to analyze", key="qa_url_input")
             with qa_c2:
-                qa_text = st.text_area("Text to analyze", height=100)
+                qa_text = st.text_area("Text to analyze", height=100, key="qa_text_input")
             
-            if st.form_submit_button("Add to Queue"):
-                to_add = []
-                if qa_url:
-                    to_add.append({
-                        "url": qa_url,
-                        "article_title": "New URL Article",
-                        "status": "Not Started",
-                        "source": "manual_dashboard",
-                        "added_at": datetime.now().isoformat()
-                    })
-                if qa_text:
-                    to_add.append({
-                        "scraped_text": qa_text,
-                        "article_title": "New Text Article",
-                        "status": "Not Started",
-                        "source": "manual_dashboard",
-                        "added_at": datetime.now().isoformat()
-                    })
+            submitted = st.form_submit_button("Add and Analyze")
+            if submitted:
+                # Deduplication Check
+                prefs = dm.get_preferences()
+                deleted_urls = set(u.strip().rstrip('/') for u in prefs.get("deleted_urls", []) if u)
                 
-                if to_add:
-                    dm.save_articles(to_add)
-                    st.success(f"Added {len(to_add)} articles!")
-                    st.rerun()
+                # Active URLs
+                active_urls = set()
+                for a in active_articles:
+                    u = a.get("url", "")
+                    if u:
+                        active_urls.add(u.strip().rstrip('/'))
+                
+                norm_qa_url = qa_url.strip().rstrip('/') if qa_url else ""
+                
+                if norm_qa_url:
+                    if norm_qa_url in deleted_urls:
+                         st.error("⚠️ This URL was previously deleted and is blacklisted.")
+                         # Allow user to force add? Maybe not for now.
+                         # st.stop() will stop execution here
+                    elif norm_qa_url in active_urls:
+                         st.warning("⚠️ This URL is already in the dashboard.")
+                    else:
+                        # Proceed with adding
+                        to_add = []
+                        
+                        with st.spinner("Processing article..."):
+                            # 1. Handle URL Input
+                            if qa_url:
+                                new_art = {
+                                    "url": qa_url,
+                                    "article_title": "Processing...",
+                                    "status": "In Process",
+                                    "source": "manual_dashboard",
+                                    "added_at": datetime.now().isoformat()
+                                }
+                                
+                                # Attempt immediate scrape and analysis
+                                try:
+                                    # Scrape
+                                    content, err = scrape_article(qa_url)
+                                    if err:
+                                        new_art["last_error"] = f"Scrape Error: {err}"
+                                        new_art["article_title"] = "Scrape Failed"
+                                    else:
+                                        new_art["scraped_text"] = content["text"]
+                                        new_art["article_title"] = content["title"]
+                                        
+                                        # Analyze
+                                        if api_key:
+                                            try:
+                                                analysis = analyze_content(content["text"], content["title"], api_key)
+                                                new_art.update(analysis)
+                                                new_art["status"] = "Not Started" # Ready for review
+                                            except Exception as e:
+                                                new_art["last_error"] = f"Analysis Error: {e}"
+                                        else:
+                                            new_art["last_error"] = "Analysis skipped: No API Key"
+                                            
+                                except Exception as e:
+                                    new_art["last_error"] = f"Unexpected Error: {e}"
+                                     
+                                to_add.append(new_art)
+
+                            # 2. Handle Text Input
+                            if qa_text:
+                                new_art = {
+                                    "scraped_text": qa_text,
+                                    "article_title": "New Text Analysis",
+                                    "status": "In Process",
+                                    "source": "manual_dashboard",
+                                    "added_at": datetime.now().isoformat()
+                                }
+                                
+                                if api_key:
+                                    try:
+                                        analysis = analyze_content(qa_text, "Provided Text", api_key)
+                                        new_art.update(analysis)
+                                        new_art["status"] = "Not Started"
+                                    except Exception as e:
+                                        new_art["last_error"] = f"Analysis Error: {e}"
+                                else:
+                                    new_art["last_error"] = "Analysis skipped: No API Key"
+                                    
+                                to_add.append(new_art)
+                            
+                            if to_add:
+                                try:
+                                    dm.save_articles(to_add)
+                                    st.toast(f"✅ Added {len(to_add)} articles! Refreshing...")
+                                    
+                                    # Clear inputs via session state
+                                    st.session_state["qa_url_input"] = ""
+                                    st.session_state["qa_text_input"] = ""
+                                    # Clear search to ensure visibility
+                                    st.session_state["dashboard_search"] = ""
+                                    
+                                    # Small delay to ensure toast is seen and file write completes
+                                    import time
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to save articles: {e}")
+                            else:
+                                st.warning("Please enter a URL or Text.")
+                elif qa_text:
+                    # Just Text (No URL check needed)
+                    to_add = []
+                    with st.spinner("Processing text..."):
+                         new_art = {
+                            "scraped_text": qa_text,
+                            "article_title": "New Text Analysis",
+                            "status": "In Process",
+                            "source": "manual_dashboard",
+                            "added_at": datetime.now().isoformat()
+                        }
+                        
+                         if api_key:
+                            try:
+                                analysis = analyze_content(qa_text, "Provided Text", api_key)
+                                new_art.update(analysis)
+                                new_art["status"] = "Not Started"
+                            except Exception as e:
+                                new_art["last_error"] = f"Analysis Error: {e}"
+                         else:
+                            new_art["last_error"] = "Analysis skipped: No API Key"
+                            
+                         to_add.append(new_art)
+                         
+                         try:
+                            dm.save_articles(to_add)
+                            st.toast(f"✅ Added Text Analysis! Refreshing...")
+                            st.session_state["qa_text_input"] = ""
+                            st.session_state["dashboard_search"] = ""
+                            import time
+                            time.sleep(0.5)
+                            st.rerun()
+                         except Exception as e:
+                            st.error(f"Failed to save: {e}")
+                else:
+                    st.warning("Please enter a URL or Text.")
         
         # Search
-        search = st.text_input("Search articles...", placeholder="Title, Summary, or URL")
+        search = st.text_input("Search articles...", placeholder="Title, Summary, or URL", key="dashboard_search")
+        
+        # --- Advanced Dashboard Tools ---
+        with st.expander("🛠️ Advanced Tools (Bulk Delete, etc.)"):
+            # Bulk Delete Logic
+            st.markdown("**Bulk Delete**")
+            active_candidates = dm.get_active_articles()
+            if not active_candidates:
+                st.info("No active articles to delete.")
+            else:
+                with st.form("dashboard_bulk_delete"):
+                    # Create labels with ID to ensure uniqueness but display title
+                    # Using a mapping
+                    opts_map = {f"{a.get('article_title', 'Untitled')} ({a.get('added_at', '')[:10]})": a.get('id') for a in active_candidates}
+                    sel_titles = st.multiselect("Select Articles to Delete", options=list(opts_map.keys()))
+                    
+                    permanent = st.checkbox("Permanent Delete & Blacklist", value=True, help="Permanently remove and prevent re-sync.")
+                    
+                    if st.form_submit_button("Delete Selected"):
+                        count = 0
+                        for title in sel_titles:
+                            aid = opts_map[title]
+                            if permanent:
+                                dm.purge_article(aid)
+                            else:
+                                dm.delete_article(aid)
+                            count += 1
+                        st.success(f"Deleted {count} articles.")
+                        st.rerun()
         
         filtered = active_articles
         if search:
@@ -789,9 +980,9 @@ else:
                     st.rerun()
                     
                 # Delete Button
-                if c5.button("🗑️", key=f"del_{a['id']}", help="Delete Article"):
-                    dm.update_article(a['id'], {"status": "Deleted"})
-                    st.toast("Article deleted")
+                if c5.button("🗑️", key=f"del_{a['id']}", help="Permanently Delete and Blacklist URL"):
+                    dm.purge_article(a['id'])
+                    st.toast("Article deleted and blacklisted")
                     st.rerun()
                     
                 st.markdown("---")
@@ -864,8 +1055,9 @@ else:
                             st.rerun()
 
                     with t5:
-                        if st.button("🗑️", help="Delete Article"):
-                            dm.update_article(sel_id, {"status": "Deleted"})
+                        if st.button("🗑️", help="Permanently Delete Article"):
+                            dm.purge_article(sel_id)
+                            st.toast("Article deleted and blacklisted")
                             # Try to go to next, else prev, else dashboard
                             new_id = next_id if next_id else prev_id
                             if new_id:
@@ -923,35 +1115,8 @@ else:
                 # 3. Perform Analysis if triggered
                 if do_analysis and api_key:
                      with st.spinner("Analyzing with GPT-4o..."):
-                        prompt = f"""
-                        Analyze this article for fraud prevention insights.
-                        Title: {analysis_title}
-                        Text: {analysis_text[:15000]}
-                        
-                        Return a JSON object with:
-                        - tl_dr (list of strings): 5 to 10 of the most relevant points.
-                        - summary (string): Narrative summary, up to 5 paragraphs.
-                        - organizations_involved (list of objects): Each with 'name' and 'role_summary'. Identify all companies and government organizations.
-                        - allegations (string): Details on what types of fraud occurred or allegedly occurred.
-                        - current_situation (string): Have there been arrests, convictions, plea bargains, or other resolutions?
-                        - next_steps (string): Information on what happens next.
-                        - prevention_strategies (list of objects): Each with 'issue' and 'prevention'.
-                        - fraud_indicator (High/Medium/Low): Overall risk level.
-                        - discovery_questions (list of strings): 3-5 questions to ask clients.
-                        - date (YYYY-MM-DD if found)
-                        """
                         try:
-                            client = openai.OpenAI(api_key=api_key)
-                            response = client.chat.completions.create(
-                                model="gpt-4o",
-                                messages=[
-                                    {"role": "system", "content": "You are a fraud analyst. Output JSON."},
-                                    {"role": "user", "content": prompt}
-                                ],
-                                response_format={"type": "json_object"}
-                            )
-                            analysis = json.loads(response.choices[0].message.content)
-                            analysis = normalize_analysis(analysis)
+                            analysis = analyze_content(analysis_text, analysis_title, api_key)
                             
                             # Merge into article
                             dm.update_article(sel_id, {

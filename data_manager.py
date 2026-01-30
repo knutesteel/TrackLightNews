@@ -37,47 +37,71 @@ class DataManager:
         except (json.JSONDecodeError, FileNotFoundError):
             return []
 
-    def set_backend(self, sheet_manager, sheet_name):
+    def set_backend(self, sheet_manager, sheet_name, load=True):
         """
         Attaches a SheetManager backend for persistent storage.
-        Loads data from the sheet immediately.
+        If load=True, loads data from the sheet immediately.
         """
         self.sm = sheet_manager
         self.sheet_name = sheet_name
         
-        # Load from remote DB
-        try:
-            remote_data = self.sm.load_db(self.sheet_name)
-            if remote_data:
-                # Merge logic: We want to keep local status if it's newer, 
-                # but currently we treat remote as source of truth for persistence.
-                
-                # However, we must ensure "Deleted" status is respected if present in remote.
-                # If the user says deleted items "returned", it means they were deleted locally 
-                # but not in the remote DB when it was last saved, OR the remote DB has them as active.
-                
-                # If we just loaded from remote, we trust remote's status.
-                # But if we want to clean up ~50 deleted items that are in DB, we need a way to filter them.
-                # For now, we trust the remote data. If they are in DB as "Deleted", get_active_articles filters them.
-                # If they are in DB as "Not Started", they show up.
-                
-                self.articles_cache = remote_data
-                self._save_to_local(remote_data)
-            else:
-                # Remote is empty.
-                # If local cache is empty, try reloading from disk just in case
-                if not self.articles_cache:
-                    self.articles_cache = self._load_from_local()
-                
-                if self.articles_cache:
-                    # If remote is empty but local has data, migrate local to remote
-                    print("Remote DB empty. Migrating local data...")
-                    success, msg = self.sm.save_db(self.sheet_name, self.articles_cache)
-                    if not success:
-                        print(f"Migration failed: {msg}")
-                        # Return error to caller if possible, or just log it
-        except Exception as e:
-            print(f"Error loading from backend: {e}")
+        if load:
+            # Load from remote DB
+            try:
+                remote_data = self.sm.load_db(self.sheet_name)
+                if remote_data:
+                    # Filter out blacklisted URLs from remote data
+                    prefs = self.get_preferences()
+                    deleted_urls = set(u.strip().rstrip('/') for u in prefs.get("deleted_urls", []) if u)
+                    
+                    filtered_remote = []
+                    for a in remote_data:
+                        url = a.get("url", "").strip().rstrip('/')
+                        # If it has a URL and that URL is in the blacklist, skip it
+                        if url and url in deleted_urls:
+                            continue
+                        filtered_remote.append(a)
+                    
+                    remote_data = filtered_remote
+
+                    # Merge logic:
+                    # 1. Create a map of Remote articles by ID
+                    remote_map = {a.get("id"): a for a in remote_data}
+                    
+                    # 2. Iterate through local cache. 
+                    # If ID exists in remote, use remote (Source of Truth).
+                    # If ID does NOT exist in remote, KEEP local (assume it's new and hasn't synced yet).
+                    merged = []
+                    
+                    # Start with remote data as the base
+                    merged = list(remote_data)
+                    remote_ids = set(remote_map.keys())
+                    
+                    # Add any local items that are missing from remote
+                    # (e.g. items added while offline or if last sync failed)
+                    for local_art in self.articles_cache:
+                        if local_art.get("id") not in remote_ids:
+                            merged.append(local_art)
+                    
+                    self.articles_cache = merged
+                    self._save_to_local(merged)
+                    
+                    # If we found local items that weren't in remote, we should probably trigger a save?
+                    # For now, let's just update memory/local file. Next save action will push them.
+                else:
+                    # Remote is empty.
+                    # If local cache is empty, try reloading from disk just in case
+                    if not self.articles_cache:
+                        self.articles_cache = self._load_from_local()
+                    
+                    if self.articles_cache:
+                        # If remote is empty but local has data, migrate local to remote
+                        print("Remote DB empty. Migrating local data...")
+                        success, msg = self.sm.save_db(self.sheet_name, self.articles_cache)
+                        if not success:
+                            print(f"Migration failed: {msg}")
+            except Exception as e:
+                print(f"Error loading from backend: {e}")
 
     def get_all_articles(self):
         return self.articles_cache
@@ -173,7 +197,20 @@ class DataManager:
         # Deprecated but kept for compatibility if needed internally
         self._save_to_local(articles)
             
-    # --- Preferences Methods ---
+    def get_storage_info(self):
+        """Returns debug info about storage."""
+        info = {
+            "data_file": os.path.abspath(self.data_file),
+            "prefs_file": os.path.abspath(self.prefs_file),
+            "cache_size": len(self.articles_cache),
+            "remote_connected": bool(self.sm and self.sheet_name)
+        }
+        if os.path.exists(self.data_file):
+            info["file_size_bytes"] = os.path.getsize(self.data_file)
+        else:
+            info["file_size_bytes"] = 0
+        return info
+
     def get_preferences(self):
         try:
             with open(self.prefs_file, 'r') as f:
