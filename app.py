@@ -729,12 +729,19 @@ else:
         st.subheader(f"Active Articles ({len(active_articles)})")
         
         # --- Quick Add Inputs ---
+        if "quick_add_counter" not in st.session_state:
+            st.session_state["quick_add_counter"] = 0
+            
         with st.form("quick_add_form", clear_on_submit=False):
             qa_c1, qa_c2 = st.columns(2)
+            # Use dynamic keys to allow programmatic clearing
+            qa_key_url = f"qa_url_{st.session_state['quick_add_counter']}"
+            qa_key_text = f"qa_text_{st.session_state['quick_add_counter']}"
+            
             with qa_c1:
-                qa_url = st.text_input("URL to analyze", key="qa_url_input")
+                qa_url = st.text_input("URL to analyze", key=qa_key_url)
             with qa_c2:
-                qa_text = st.text_area("Text to analyze", height=100, key="qa_text_input")
+                qa_text = st.text_area("Text to analyze", height=100, key=qa_key_text)
             
             submitted = st.form_submit_button("Add and Analyze")
             if submitted:
@@ -827,9 +834,9 @@ else:
                                     dm.save_articles(to_add)
                                     st.toast(f"✅ Added {len(to_add)} articles! Refreshing...")
                                     
-                                    # Clear inputs via session state
-                                    st.session_state["qa_url_input"] = ""
-                                    st.session_state["qa_text_input"] = ""
+                                    # Clear inputs by incrementing counter
+                                    st.session_state["quick_add_counter"] += 1
+                                    
                                     # Clear search to ensure visibility
                                     st.session_state["dashboard_search"] = ""
                                     
@@ -868,7 +875,10 @@ else:
                          try:
                             dm.save_articles(to_add)
                             st.toast(f"✅ Added Text Analysis! Refreshing...")
-                            st.session_state["qa_text_input"] = ""
+                            
+                            # Clear inputs by incrementing counter
+                            st.session_state["quick_add_counter"] += 1
+                            
                             st.session_state["dashboard_search"] = ""
                             import time
                             time.sleep(0.5)
