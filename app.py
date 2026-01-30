@@ -689,17 +689,88 @@ else:
             s = search.lower()
             filtered = [a for a in active_articles if s in a.get("article_title", "").lower() or s in a.get("url", "").lower()]
             
-        # Display as dataframe or list
+        # Display as data_editor
         if filtered:
-            df_data = []
+            data_for_df = []
             for a in filtered:
-                df_data.append({
-                    "Status": a.get("status"),
-                    "Title": a.get("article_title"),
-                    "Added": a.get("added_at")[:10],
-                    "ID": a.get("id")
+                # Map status for consistency
+                s = a.get("status", "Not Started")
+                if s == "In Progress": s = "In Process"
+                if s == "Done": s = "Complete"
+                
+                # Format TL;DR
+                tldr = a.get("tl_dr", "")
+                if isinstance(tldr, list):
+                    tldr = "; ".join(tldr)
+                
+                data_for_df.append({
+                    "id": a.get("id"),
+                    "Status": s,
+                    "Title": a.get("article_title", "Untitled"),
+                    "TL;DR": str(tldr)[:300], # Truncate for display
+                    "full_obj": a # Keep reference if needed, but dicts in DF are tricky
                 })
-            st.dataframe(pd.DataFrame(df_data), use_container_width=True, hide_index=True)
+            
+            df = pd.DataFrame(data_for_df)
+            
+            # Editor Config
+            editor_key = "article_editor"
+            
+            edited_df = st.data_editor(
+                df,
+                key=editor_key,
+                column_config={
+                    "id": None, # Hidden
+                    "full_obj": None, # Hidden
+                    "Status": st.column_config.SelectboxColumn(
+                        "Status",
+                        options=["Not Started", "In Process", "Complete"],
+                        required=True,
+                        width="medium"
+                    ),
+                    "Title": st.column_config.TextColumn(
+                        "Title",
+                        width="large",
+                        help="Select row to view details"
+                    ),
+                    "TL;DR": st.column_config.TextColumn(
+                        "TL;DR",
+                        width="large"
+                    )
+                },
+                hide_index=True,
+                use_container_width=True,
+                disabled=["Title", "TL;DR"],
+                selection_mode="single-row",
+                on_select="rerun"
+            )
+            
+            # Handle Status Changes
+            # Compare edited_df with original data to find changes
+            # We can iterate and check against dm.get_article or the filtered list
+            for index, row in edited_df.iterrows():
+                art_id = row["id"]
+                new_status = row["Status"]
+                
+                # Find original in filtered list
+                orig = next((a for a in filtered if a["id"] == art_id), None)
+                if orig:
+                    orig_s = orig.get("status", "Not Started")
+                    if orig_s == "In Progress": orig_s = "In Process"
+                    if orig_s == "Done": orig_s = "Complete"
+                    
+                    if new_status != orig_s:
+                        dm.update_article(art_id, {"status": new_status})
+                        st.toast(f"Updated status for '{row['Title']}'")
+            
+            # Handle Selection for Navigation
+            if editor_key in st.session_state and st.session_state[editor_key].get("selection", {}).get("rows"):
+                sel_idx = st.session_state[editor_key]["selection"]["rows"][0]
+                if sel_idx < len(df):
+                    selected_id = df.iloc[sel_idx]["id"]
+                    st.session_state["selected_article_id"] = selected_id
+                    st.info(f"Selected '{df.iloc[sel_idx]['Title']}'. Switch to 'Article Details' tab to view.")
+
         else:
             st.info("No articles found.")
             
@@ -707,11 +778,27 @@ else:
         if not active_articles:
             st.info("No articles to select.")
         else:
-            # Selector
+            # Selector logic - prioritize session state selection
             opts = {f"{a.get('article_title')}": a.get("id") for a in active_articles}
-            sel_title = st.selectbox("Select Article", options=list(opts.keys()))
+            opt_titles = list(opts.keys())
+            
+            # Determine default index
+            default_idx = 0
+            if "selected_article_id" in st.session_state:
+                # Find title for this ID
+                target_id = st.session_state["selected_article_id"]
+                for i, title in enumerate(opt_titles):
+                    if opts[title] == target_id:
+                        default_idx = i
+                        break
+            
+            sel_title = st.selectbox("Select Article", options=opt_titles, index=default_idx)
             sel_id = opts[sel_title]
             
+            # Update selection state if changed via dropdown
+            if sel_id != st.session_state.get("selected_article_id"):
+                st.session_state["selected_article_id"] = sel_id
+
             article = next((a for a in active_articles if a["id"] == sel_id), None)
             
             if article:
@@ -726,8 +813,19 @@ else:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    new_status = st.selectbox("Status", ["Not Started", "In Progress", "Done", "Deleted"], index=["Not Started", "In Progress", "Done", "Deleted"].index(article.get("status", "Not Started")))
-                    if new_status != article.get("status"):
+                    current_status = article.get("status", "Not Started")
+                    # Normalize for dropdown
+                    if current_status == "In Progress": current_status = "In Process"
+                    if current_status == "Done": current_status = "Complete"
+                    
+                    status_opts = ["Not Started", "In Process", "Complete", "Deleted"]
+                    try:
+                        idx = status_opts.index(current_status)
+                    except ValueError:
+                        idx = 0
+                        
+                    new_status = st.selectbox("Status", status_opts, index=idx)
+                    if new_status != current_status:
                         dm.update_article(sel_id, {"status": new_status})
                         st.rerun()
                 
