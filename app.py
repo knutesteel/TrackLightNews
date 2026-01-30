@@ -683,6 +683,38 @@ else:
     if st.session_state["current_view"] == "dashboard":
         st.subheader(f"Active Articles ({len(active_articles)})")
         
+        # --- Quick Add Inputs ---
+        with st.form("quick_add_form", clear_on_submit=True):
+            qa_c1, qa_c2 = st.columns(2)
+            with qa_c1:
+                qa_url = st.text_input("URL to analyze")
+            with qa_c2:
+                qa_text = st.text_area("Text to analyze", height=100)
+            
+            if st.form_submit_button("Add to Queue"):
+                to_add = []
+                if qa_url:
+                    to_add.append({
+                        "url": qa_url,
+                        "article_title": "New URL Article",
+                        "status": "Not Started",
+                        "source": "manual_dashboard",
+                        "added_at": datetime.now().isoformat()
+                    })
+                if qa_text:
+                    to_add.append({
+                        "scraped_text": qa_text,
+                        "article_title": "New Text Article",
+                        "status": "Not Started",
+                        "source": "manual_dashboard",
+                        "added_at": datetime.now().isoformat()
+                    })
+                
+                if to_add:
+                    dm.save_articles(to_add)
+                    st.success(f"Added {len(to_add)} articles!")
+                    st.rerun()
+        
         # Search
         search = st.text_input("Search articles...", placeholder="Title, Summary, or URL")
         
