@@ -89,7 +89,7 @@ def analyze_content(text, title, api_key):
     Return a JSON object with:
     - tl_dr (list of strings): 5 to 10 of the most relevant points.
     - summary (string): Narrative summary, up to 5 paragraphs.
-    - organizations_involved (list of objects): Each with 'name' and 'role_summary'. Identify all companies and government organizations.
+    - organizations_involved (list of objects): Each with 'name', 'role_summary', and 'people' (list of objects, each with 'name' and 'role'). Identify all companies and government organizations and the key people associated with them.
     - allegations (string): Details on what types of fraud occurred or allegedly occurred.
     - current_situation (string): Have there been arrests, convictions, plea bargains, or other resolutions?
     - next_steps (string): Information on what happens next.
@@ -112,6 +112,37 @@ def analyze_content(text, title, api_key):
         return normalize_analysis(analysis)
     except Exception as e:
         raise Exception(f"Analysis failed: {e}")
+
+def analyze_person(name, context_text, api_key):
+    """
+    Analyzes a specific person mentioned in the text using GPT-4o.
+    """
+    if not api_key:
+        return "Error: No API Key provided."
+        
+    prompt = f"""
+    Analyze the following text to find details about "{name}".
+    
+    Text Context:
+    {context_text[:10000]}
+    
+    Provide a brief summary of who they are, their role in the events described, and any background information mentioned. 
+    Focus on facts explicitly stated in the text or generally known public information relevant to this context.
+    Output as a concise paragraph.
+    """
+    try:
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a research analyst."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 def scrape_article(url):
     try:
@@ -1149,7 +1180,7 @@ else:
                     fi_color = "red" if fi == "High" else "orange" if fi == "Medium" else "green"
                     st.markdown(f"### Analysis Result <span style='color:{fi_color}; font-size:0.8em; border:1px solid {fi_color}; padding:2px 5px; border-radius:5px;'>{fi.upper()}</span>", unsafe_allow_html=True)
                     
-                    st.subheader("TL;DR")
+                    st.subheader("1. TL;DR")
                     tldr = article.get("tl_dr")
                     if isinstance(tldr, list):
                         for point in tldr:
@@ -1157,32 +1188,64 @@ else:
                     else:
                         st.write(tldr)
 
-                    st.subheader("Summary")
+                    st.subheader("2. Summary")
                     st.write(article.get("summary", ""))
 
-                    st.subheader("Organizations Involved")
+                    st.subheader("3. Organizations Involved")
                     orgs = article.get("organizations_involved", [])
                     if orgs:
-                        for org in orgs:
+                        for idx_org, org in enumerate(orgs):
                             if isinstance(org, dict):
                                 name = org.get("name", "Unknown")
                                 role = org.get("role_summary", org.get("role", ""))
                                 st.markdown(f"**{name}**: {role}")
+                                
+                                # People Logic
+                                people = org.get("people", [])
+                                if people:
+                                    for idx_p, person in enumerate(people):
+                                        p_name = person.get("name", "Unknown")
+                                        p_role = person.get("role", "")
+                                        st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;👤 **{p_name}** — {p_role}")
+                                        
+                                        # Buttons Row
+                                        # Use columns for compact buttons
+                                        pb1, pb2, pb3 = st.columns([1.5, 2, 6])
+                                        with pb1:
+                                            # LinkedIn Lookup
+                                            li_url = f"https://www.linkedin.com/search/results/all/?keywords={urllib.parse.quote_plus(p_name)}"
+                                            st.link_button("LinkedIn Search", li_url)
+                                        with pb2:
+                                            # Person Details (GPT)
+                                            # Unique key for every button
+                                            btn_key = f"btn_p_det_{sel_id}_{idx_org}_{idx_p}"
+                                            if st.button("Person Details", key=btn_key):
+                                                with st.spinner(f"Researching {p_name}..."):
+                                                    details = analyze_person(p_name, article.get("scraped_text", ""), api_key)
+                                                    person["details"] = details
+                                                    # Update the main article object in DB
+                                                    dm.update_article(sel_id, {"organizations_involved": orgs})
+                                                    st.rerun()
+                                        
+                                        # Display Details if available
+                                        if person.get("details"):
+                                            st.info(f"**Details on {p_name}:** {person.get('details')}")
+
                             elif isinstance(org, str):
                                 st.markdown(f"- {org}")
 
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        st.subheader("Allegations")
+                        st.subheader("4. Allegations")
                         st.write(article.get("allegations", "N/A"))
                     with col_b:
-                        st.subheader("Current Situation")
+                        st.subheader("5. Current Situation")
                         st.write(article.get("current_situation", "N/A"))
 
-                    st.subheader("Next Steps")
+                    st.subheader("6. Next Steps")
                     st.write(article.get("next_steps", "N/A"))
 
-                    st.subheader("Tracklight Prevention")
+                    st.subheader("7. Tracklight Prevention")
                     prevs = article.get("prevention_strategies", [])
                     if prevs:
                         for p in prevs:
@@ -1208,8 +1271,13 @@ else:
                         st.table(pd.DataFrame(chat_data))
                     
                     # Input
+                    if "chat_counter" not in st.session_state:
+                        st.session_state["chat_counter"] = 0
+                    
+                    chat_key = f"chat_in_{sel_id}_{st.session_state['chat_counter']}"
+
                     with st.form("chat_form"):
-                        user_q = st.text_input("Ask a question about this article:")
+                        user_q = st.text_input("Ask a question about this article:", key=chat_key)
                         submitted = st.form_submit_button("Ask")
                         if submitted and user_q:
                             # Call OpenAI
@@ -1231,6 +1299,9 @@ else:
                                     new_history = article.get("chat_history", [])
                                     new_history.append({"q": user_q, "a": ans})
                                     dm.update_article(sel_id, {"chat_history": new_history})
+                                    
+                                    # Clear input
+                                    st.session_state["chat_counter"] += 1
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error: {e}")
