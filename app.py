@@ -674,11 +674,13 @@ else:
 
     # --- Main Content ---
     
-    tab_list, tab_details = st.tabs(["📋 Dashboard", "📄 Article Details"])
-    
+    # View State Management
+    if "current_view" not in st.session_state:
+        st.session_state["current_view"] = "dashboard"
+        
     active_articles = dm.get_active_articles()
 
-    with tab_list:
+    if st.session_state["current_view"] == "dashboard":
         st.subheader(f"Active Articles ({len(active_articles)})")
         
         # Search
@@ -689,116 +691,105 @@ else:
             s = search.lower()
             filtered = [a for a in active_articles if s in a.get("article_title", "").lower() or s in a.get("url", "").lower()]
             
-        # Display as data_editor
+        # --- Custom List View with Buttons ---
         if filtered:
-            data_for_df = []
-            for a in filtered:
-                # Map status for consistency
-                s = a.get("status", "Not Started")
-                if s == "In Progress": s = "In Process"
-                if s == "Done": s = "Complete"
+            # Pagination
+            items_per_page = 20
+            total_pages = max(1, (len(filtered) - 1) // items_per_page + 1)
+            
+            # Only show pagination controls if needed
+            if total_pages > 1:
+                col_p1, col_p2 = st.columns([1, 4])
+                with col_p1:
+                    current_page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1)
+            else:
+                current_page = 1
+            
+            start_idx = (current_page - 1) * items_per_page
+            end_idx = start_idx + items_per_page
+            page_items = filtered[start_idx:end_idx]
+            
+            # Header
+            c1, c2, c3, c4, c5 = st.columns([1.5, 3, 4, 0.7, 0.7])
+            c1.markdown("**Status**")
+            c2.markdown("**Title**")
+            c3.markdown("**TL;DR**")
+            c4.markdown("**Read**")
+            c5.markdown("**Del**")
+            st.divider()
+            
+            for a in page_items:
+                c1, c2, c3, c4, c5 = st.columns([1.5, 3, 4, 0.7, 0.7])
                 
-                # Format TL;DR
-                tldr = a.get("tl_dr", "")
-                if isinstance(tldr, list):
-                    tldr = "; ".join(tldr)
-                
-                data_for_df.append({
-                    "Select": False,
-                    "id": a.get("id"),
-                    "Status": s,
-                    "Title": a.get("article_title", "Untitled"),
-                    "TL;DR": str(tldr)[:300], # Truncate for display
-                    "full_obj": a # Keep reference if needed, but dicts in DF are tricky
-                })
-            
-            df = pd.DataFrame(data_for_df)
-            
-            # Editor Config
-            editor_key = "article_editor"
-            
-            edited_df = st.data_editor(
-                df,
-                key=editor_key,
-                column_config={
-                    "Select": st.column_config.CheckboxColumn("View", width="small", help="Check to view details"),
-                    "id": None, # Hidden
-                    "full_obj": None, # Hidden
-                    "Status": st.column_config.SelectboxColumn(
-                        "Status",
-                        options=["Not Started", "In Process", "Complete"],
-                        required=True,
-                        width="medium"
-                    ),
-                    "Title": st.column_config.TextColumn(
-                        "Title",
-                        width="large"
-                    ),
-                    "TL;DR": st.column_config.TextColumn(
-                        "TL;DR",
-                        width="large"
-                    )
-                },
-                hide_index=True,
-                use_container_width=True,
-                disabled=["Title", "TL;DR"]
-            )
-            
-            # Handle Status Changes
-            # Compare edited_df with original data to find changes
-            # We can iterate and check against dm.get_article or the filtered list
-            for index, row in edited_df.iterrows():
-                art_id = row["id"]
-                new_status = row["Status"]
-                
-                # Find original in filtered list
-                orig = next((a for a in filtered if a["id"] == art_id), None)
-                if orig:
-                    orig_s = orig.get("status", "Not Started")
-                    if orig_s == "In Progress": orig_s = "In Process"
-                    if orig_s == "Done": orig_s = "Complete"
+                # Status
+                current_status = a.get("status", "Not Started")
+                # Normalize status for dropdown
+                if current_status == "In Progress": current_status = "In Process"
+                if current_status == "Done": current_status = "Complete"
+                if current_status not in ["Not Started", "In Process", "Complete"]:
+                    current_status = "Not Started"
                     
-                    if new_status != orig_s:
-                        dm.update_article(art_id, {"status": new_status})
-                        st.toast(f"Updated status for '{row['Title']}'")
-            
-            # Handle Selection for Navigation (via Checkbox)
-            selected_rows = edited_df[edited_df["Select"] == True]
-            if not selected_rows.empty:
-                # Take the last checked item as the selection
-                sel_row = selected_rows.iloc[-1]
-                selected_id = sel_row["id"]
+                new_status = c1.selectbox(
+                    "Status", 
+                    options=["Not Started", "In Process", "Complete"], 
+                    key=f"status_{a['id']}", 
+                    index=["Not Started", "In Process", "Complete"].index(current_status),
+                    label_visibility="collapsed"
+                )
                 
-                if st.session_state.get("selected_article_id") != selected_id:
-                    st.session_state["selected_article_id"] = selected_id
-                    st.info(f"Selected '{sel_row['Title']}'. Switch to 'Article Details' tab to view.")
-
+                if new_status != current_status:
+                    dm.update_article(a['id'], {"status": new_status})
+                    st.toast(f"Updated status to {new_status}")
+                    # Optional: st.rerun() if we want immediate refresh
+                
+                # Title
+                c2.write(a.get("article_title", "Untitled"))
+                
+                # TLDR
+                tldr = a.get("tl_dr", "")
+                if isinstance(tldr, list): tldr = "; ".join(tldr)
+                c3.write(str(tldr)[:200] + "..." if len(str(tldr)) > 200 else str(tldr))
+                
+                # Read Button
+                if c4.button("Read", key=f"read_{a['id']}"):
+                    st.session_state["selected_article_id"] = a["id"]
+                    st.session_state["current_view"] = "details"
+                    st.rerun()
+                    
+                # Delete Button
+                if c5.button("🗑️", key=f"del_{a['id']}", help="Delete Article"):
+                    dm.update_article(a['id'], {"status": "Deleted"})
+                    st.toast("Article deleted")
+                    st.rerun()
+                    
+                st.markdown("---")
         else:
             st.info("No articles found.")
+
+    elif st.session_state["current_view"] == "details":
+        if st.button("← Back to Dashboard"):
+            st.session_state["current_view"] = "dashboard"
+            st.rerun()
             
-    with tab_details:
+        # Logic for displaying details
         if not active_articles:
-            st.info("No articles to select.")
+             st.info("No articles available.")
         else:
-            # Selector logic - prioritize session state selection
-            opts = {f"{a.get('article_title')}": a.get("id") for a in active_articles}
-            opt_titles = list(opts.keys())
-            
-            # Determine default index
-            default_idx = 0
-            if "selected_article_id" in st.session_state:
-                # Find title for this ID
-                target_id = st.session_state["selected_article_id"]
-                for i, title in enumerate(opt_titles):
-                    if opts[title] == target_id:
-                        default_idx = i
-                        break
-            
-            sel_title = st.selectbox("Select Article", options=opt_titles, index=default_idx)
-            sel_id = opts[sel_title]
-            
-            # Update selection state if changed via dropdown
-            if sel_id != st.session_state.get("selected_article_id"):
+             # Find selected article
+             selected_id = st.session_state.get("selected_article_id")
+             # Validate if it still exists
+             current_article = next((a for a in active_articles if a["id"] == selected_id), None)
+             
+             if not current_article:
+                 st.warning("Selected article not found (it may have been deleted).")
+                 st.session_state["current_view"] = "dashboard"
+                 st.rerun()
+             else:
+                 # Set 'article' for the rest of the logic
+                 article = current_article
+                 sel_id = selected_id
+                 
+                 # --- Article Details View ---
                 st.session_state["selected_article_id"] = sel_id
 
             article = next((a for a in active_articles if a["id"] == sel_id), None)
