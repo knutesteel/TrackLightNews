@@ -445,7 +445,16 @@ with st.sidebar:
             creds_dict = dict(st.secrets["gcp_service_account"])
             creds_source = "secrets_dict"
         elif "service_account_json" in st.secrets:
-            creds_dict = json.loads(st.secrets["service_account_json"])
+            # Handle potential JSON formatting issues in secrets
+            secret_val = st.secrets["service_account_json"]
+            try:
+                creds_dict = json.loads(secret_val)
+            except json.JSONDecodeError:
+                # Try to fix common issues (like single quotes) if it's a python dict string
+                try:
+                    creds_dict = ast.literal_eval(secret_val)
+                except:
+                    raise ValueError("Invalid JSON format in 'service_account_json' secret. Ensure property names are in double quotes.")
             creds_source = "secrets_json"
     except Exception as e:
         st.error(f"Error loading secrets: {e}")
@@ -545,8 +554,19 @@ with st.sidebar:
             else:
                 st.warning("JSON parsed, but 'client_email' not found.")
         except json.JSONDecodeError:
-            if len(creds_input) > 10:
-                st.warning("Invalid JSON format.")
+            # Try to help the user if they pasted Python dict syntax
+            try:
+                c = ast.literal_eval(creds_input)
+                if isinstance(c, dict):
+                    st.info("💡 Detected Python dictionary syntax (single quotes). We will convert this to valid JSON for you on save.")
+                    preview_email = c.get("client_email")
+                    if preview_email:
+                        st.markdown(f"**Found Email:** `{preview_email}`")
+                else:
+                    st.warning("Invalid JSON format. Expecting double quotes around property names.")
+            except:
+                if len(creds_input) > 10:
+                    st.warning("Invalid JSON format. Expecting double quotes around property names.")
     
     if st.button("Save Google Config"):
         if sheet_name:
@@ -554,7 +574,13 @@ with st.sidebar:
         
         if creds_input:
             try:
-                c = json.loads(creds_input)
+                # Try JSON load first
+                try:
+                    c = json.loads(creds_input)
+                except json.JSONDecodeError:
+                    # Fallback to ast.literal_eval for single-quote dicts
+                    c = ast.literal_eval(creds_input)
+                
                 # Save to file
                 with open(saved_creds_file, 'w') as f:
                     json.dump(c, f)
