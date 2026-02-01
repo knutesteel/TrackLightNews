@@ -686,13 +686,11 @@ else:
     
     # Restore Connection Logic
     is_sheet_connected = False
-    if has_saved_creds and sheet_name:
+    if creds_dict and sheet_name:
         try:
             # Check if we need to authenticate or re-connect
             if not dm.sm or not sm.client:
-                with open(saved_creds_file, 'r') as f:
-                    creds = json.load(f)
-                success, msg = sm.authenticate(creds)
+                success, msg = sm.authenticate(creds_dict)
                 if success:
                     # Try to set backend immediately
                     try:
@@ -767,18 +765,14 @@ else:
             
             with st.expander("🔌 Connection Troubleshooter"):
                 st.write("To sync, you need to connect your Google Sheet.")
-                if has_saved_creds:
-                    st.success("✅ Credentials File Found")
-                    try:
-                        with open(saved_creds_file, 'r') as f:
-                            c = json.load(f)
-                            e = c.get("client_email")
-                            if e:
-                                st.markdown(f"**Service Email:** `{e}`")
-                                st.info("Ensure the Google Sheet is shared with this email.")
-                    except: pass
+                if creds_dict:
+                    st.success("✅ Credentials Found")
+                    e = creds_dict.get("client_email")
+                    if e:
+                         st.markdown(f"**Service Email:** `{e}`")
+                         st.info("Ensure the Google Sheet is shared with this email.")
                 else:
-                    st.error("❌ No Credentials File Found")
+                    st.error("❌ No Credentials Found")
                 
                 if not sheet_name:
                     st.error("❌ No Sheet Name/URL configured")
