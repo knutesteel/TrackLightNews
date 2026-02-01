@@ -435,24 +435,49 @@ with st.sidebar:
     
     sheet_name = st.text_input("Google Sheet Name / ID / URL", value=get_config("GOOGLE_SHEET_NAME", ""), key="sheet_url_input_v2", help="You can enter the exact Name, the Sheet ID, or the full URL.")
     
-    saved_creds_file = "google_creds.json"
-    has_saved_creds = os.path.exists(saved_creds_file)
+    # Credentials Logic: Secrets -> File -> Input
+    creds_source = None
+    creds_dict = None
     
-    if has_saved_creds:
-        st.success("✅ Credentials Loaded")
+    # 1. Try Streamlit Secrets
+    try:
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            creds_source = "secrets_dict"
+        elif "service_account_json" in st.secrets:
+            creds_dict = json.loads(st.secrets["service_account_json"])
+            creds_source = "secrets_json"
+    except Exception as e:
+        st.error(f"Error loading secrets: {e}")
+
+    # 2. Try Local File
+    saved_creds_file = "google_creds.json"
+    if not creds_dict and os.path.exists(saved_creds_file):
         try:
             with open(saved_creds_file, 'r') as f:
-                saved_c = json.load(f)
-                saved_email = saved_c.get("client_email")
-                if saved_email:
-                    st.markdown(f"**Service Email:**")
-                    st.code(saved_email, language="text")
-                    st.caption("Share your sheet with this email.")
-                else:
-                    st.error("File found but missing 'client_email'.")
-        except Exception as e:
-            st.error(f"Error reading credentials: {e}")
+                creds_dict = json.load(f)
+            creds_source = "local_file"
+        except Exception:
+            pass
+
+    if creds_dict:
+        if creds_source.startswith("secrets"):
+            st.success("✅ Credentials Loaded from Streamlit Secrets")
+        else:
+            st.success("✅ Credentials Loaded from Local File")
             
+        saved_email = creds_dict.get("client_email")
+        if saved_email:
+            st.markdown(f"**Service Email:**")
+            st.code(saved_email, language="text")
+            st.caption("Share your sheet with this email.")
+        
+        # Authenticate Session if needed
+        if not dm.sm or not sm.client:
+            success, msg = sm.authenticate(creds_dict)
+            if not success:
+                 st.error(f"Auth Error: {msg}")
+
         # Advanced: Force Push
         with st.expander("Advanced: Data Recovery"):
             st.warning("Use this if your Google Sheet is empty but you have local data you want to upload.")
@@ -460,9 +485,7 @@ with st.sidebar:
                 try:
                     # Authenticate if needed
                     if not dm.sm or not sm.client:
-                        with open(saved_creds_file, 'r') as f:
-                            creds = json.load(f)
-                        sm.authenticate(creds)
+                        sm.authenticate(creds_dict)
                     
                     # Force load local data to be sure
                     local_data = dm._load_from_local()
@@ -484,22 +507,34 @@ with st.sidebar:
         st.markdown("""
         **How to connect:**
         1. Paste your **Service Account JSON** below.
-        2. The **Service Email** will appear.
-        3. Share your Google Sheet with that email.
-        4. Click **Save Google Config**.
+        2. Click **Save Google Config**.
+        
+        **☁️ Hosting on Streamlit Cloud?**
+        Files are deleted when the app restarts. To save permanently:
+        1. Go to your App Dashboard > Settings > Secrets.
+        2. Paste your JSON like this:
+        ```toml
+        service_account_json = \"\"\"
+        {
+          "type": "service_account",
+          ... your json here ...
+        }
+        \"\"\"
+        ```
         """)
 
-    creds_val = ""
-    if has_saved_creds:
+    # Input Area (Show existing value if from file, else empty)
+    input_val = ""
+    if creds_source == "local_file":
         try:
             with open(saved_creds_file, 'r') as f:
-                creds_val = f.read()
+                input_val = f.read()
         except: pass
         
-    creds_input = st.text_area("Service Account JSON", value=creds_val, placeholder="{ ... }", help="Paste the content of your service_account.json here.")
+    creds_input = st.text_area("Service Account JSON", value=input_val, placeholder="{ ... }", help="Paste the content of your service_account.json here.")
     
     # Immediate validation (Preview)
-    if creds_input and creds_input != creds_val:
+    if creds_input and creds_input != input_val:
         st.markdown("---")
         st.caption("Preview of pasted credentials:")
         try:
@@ -520,9 +555,16 @@ with st.sidebar:
         if creds_input:
             try:
                 c = json.loads(creds_input)
+                # Save to file
                 with open(saved_creds_file, 'w') as f:
                     json.dump(c, f)
-                st.success("Configuration Saved! Reloading...")
+                st.success("Configuration Saved! (Note: On Cloud, this resets on reboot. Use Secrets for permanence.)")
+                
+                # Also try to authenticate immediately to update session
+                sm.authenticate(c)
+                
+                import time
+                time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"Invalid JSON: {e}")
