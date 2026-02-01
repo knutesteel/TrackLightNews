@@ -610,6 +610,17 @@ with st.sidebar:
     show_debug = st.checkbox("Show Debug Info", value=st.session_state.get("show_debug", False), key="debug_checkbox_sidebar")
     st.session_state["show_debug"] = show_debug
 
+    # --- Hidden Admin Reset ---
+    # Access via ?admin_reset=true in URL
+    if st.query_params.get("admin_reset") == "true":
+        st.divider()
+        st.error("⚠️ ADMIN ZONE")
+        if st.button("HARD RESET DATABASE", type="primary"):
+            dm.clear_all_articles()
+            st.success("Database Wiped from Cloud & Remote.")
+            st.rerun()
+    # --------------------------
+
     if show_debug:
         st.divider()
         st.subheader("🛠️ Debug Info")
