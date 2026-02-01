@@ -604,7 +604,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Tools")
     
-    st.info("Bulk Delete has been moved to the Dashboard tab under 'Advanced Tools'.")
+
     
     # Debug Control
     show_debug = st.checkbox("Show Debug Info", value=st.session_state.get("show_debug", False), key="debug_checkbox_sidebar")
@@ -728,6 +728,18 @@ else:
                         should_load = (len(dm.articles_cache) == 0)
                         dm.set_backend(sm, sheet_name, load=should_load)
                         is_sheet_connected = True
+                        
+                        # --- One-Time Reset Logic ---
+                        if os.path.exists("reset_pending.txt"):
+                            try:
+                                dm.clear_all_articles()
+                                os.remove("reset_pending.txt")
+                                st.sidebar.success("✅ System Reset: All data wiped from Local and Remote.")
+                                st.rerun()
+                            except Exception as e:
+                                st.sidebar.error(f"Reset Failed: {e}")
+                        # ----------------------------
+                        
                     except Exception as e:
                         st.sidebar.error(f"DB Error: {e}")
                 else:
@@ -988,44 +1000,7 @@ else:
         # Search
         search = st.text_input("Search articles...", placeholder="Title, Summary, or URL", key="dashboard_search")
         
-        # --- Advanced Dashboard Tools ---
-        with st.expander("🛠️ Advanced Tools (Bulk Delete, etc.)"):
-            # Bulk Delete Logic
-            st.markdown("**Bulk Delete**")
-            active_candidates = dm.get_active_articles()
-            if not active_candidates:
-                st.info("No active articles to delete.")
-            else:
-                with st.form("dashboard_bulk_delete"):
-                    # Create labels with ID to ensure uniqueness but display title
-                    # Using a mapping
-                    opts_map = {f"{a.get('article_title', 'Untitled')} ({a.get('added_at', '')[:10]})": a.get('id') for a in active_candidates}
-                    sel_titles = st.multiselect("Select Articles to Delete", options=list(opts_map.keys()))
-                    
-                    permanent = st.checkbox("Permanent Delete & Blacklist", value=True, help="Permanently remove and prevent re-sync.")
-                    
-                    if st.form_submit_button("Delete Selected"):
-                        count = 0
-                        for title in sel_titles:
-                            aid = opts_map[title]
-                            if permanent:
-                                dm.purge_article(aid)
-                            else:
-                                dm.delete_article(aid)
-                            count += 1
-                        st.success(f"Deleted {count} articles.")
-                        st.rerun()
 
-            st.divider()
-            st.markdown("**⚠️ Danger Zone**")
-            col_danger_1, col_danger_2 = st.columns([3, 1])
-            with col_danger_1:
-                st.warning("This will delete ALL articles from the database. They will NOT be blacklisted, so you can re-import them.")
-            with col_danger_2:
-                if st.button("RESET DATABASE", type="primary"):
-                    dm.clear_all_articles()
-                    st.success("Database cleared!")
-                    st.rerun()
         
         filtered = active_articles
         if search:
