@@ -480,6 +480,9 @@ with st.sidebar:
             st.markdown(f"**Service Email:**")
             st.code(saved_email, language="text")
             st.caption("Share your sheet with this email.")
+        else:
+            st.warning("Credentials loaded, but 'client_email' field is missing.")
+            st.json(creds_dict) # Debug help
         
         # Authenticate Session if needed
         if not dm.sm or not sm.client:
@@ -617,7 +620,7 @@ with st.sidebar:
             # Show Service Email in Debug too
             if hasattr(sm, 'service_email') and sm.service_email:
                 st.write(f"**Service Email:** `{sm.service_email}`")
-            elif has_saved_creds:
+            elif os.path.exists(saved_creds_file):
                  try:
                     with open(saved_creds_file, 'r') as f:
                         saved_c = json.load(f)
