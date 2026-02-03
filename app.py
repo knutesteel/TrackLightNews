@@ -349,19 +349,52 @@ def maybe_auto_check_email(email_user, email_pass, api_key, force=False):
                     
             if new_links:
                 added = []
-                for l in new_links:
-                    added.append({
+                progress_bar = st.progress(0) if force else None
+                total = len(new_links)
+                
+                for idx, l in enumerate(new_links):
+                    new_art = {
                         "url": l,
-                        "article_title": "New from Email",
-                        "status": "Not Started",
+                        "article_title": "Processing...",
+                        "status": "In Process",
                         "source": "email",
                         "added_at": datetime.now().isoformat()
-                    })
+                    }
+                    
+                    # Attempt Scrape & Analyze
+                    try:
+                        content, err = scrape_article(l)
+                        if err:
+                            new_art["last_error"] = f"Scrape Error: {err}"
+                            new_art["article_title"] = "Scrape Failed"
+                        else:
+                            new_art["scraped_text"] = content["text"]
+                            new_art["article_title"] = content["title"] or "New from Email"
+                            
+                            if api_key:
+                                try:
+                                    analysis = analyze_content(content["text"], new_art["article_title"], api_key)
+                                    new_art.update(analysis)
+                                    new_art["status"] = "Not Started"
+                                except Exception as e:
+                                    new_art["last_error"] = f"Analysis Error: {e}"
+                            else:
+                                new_art["last_error"] = "Analysis skipped: No API Key"
+                    except Exception as e:
+                        new_art["last_error"] = f"Unexpected Error: {e}"
+                        
+                    added.append(new_art)
+                    if progress_bar:
+                        progress_bar.progress((idx + 1) / total)
+
+                if progress_bar:
+                    progress_bar.empty()
+
                 dm.save_articles(added)
                 if force:
-                    st.success(f"Added {len(added)} new articles from email!")
+                    st.success(f"Added and analyzed {len(added)} new articles from email!")
                 else:
-                    st.toast(f"Added {len(added)} new articles from email.")
+                    st.toast(f"Added and analyzed {len(added)} new articles from email.")
             elif force:
                 st.info("No new unique links found.")
                 
@@ -755,8 +788,12 @@ else:
             # Display current sheet name/URL for confirmation
             st.caption(f"Syncing with: {sheet_name[:30]}...")
             if st.button("🔄 Sync with Google Sheet", help="Pull new URLs and refresh data"):
-                with st.spinner("Syncing..."):
-                    # Reload DB to get latest changes (explicit sync)
+                if not api_key:
+                    st.error("⚠️ OpenAI API Key is missing! Cannot analyze new articles.")
+                    st.info("Please enter your API Key in the sidebar settings.")
+                else:
+                    with st.spinner("Syncing..."):
+                        # Reload DB to get latest changes (explicit sync)
                     dm.set_backend(sm, sheet_name, load=True)
                     
                     articles = dm.get_all_articles()
@@ -785,21 +822,59 @@ else:
                         if new_urls:
                             articles_to_add = []
                             count = 0
+                            
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            total_new = len([u for u in new_urls if u and normalize_url(u) not in existing_urls])
+                            current_idx = 0
+
                             for url in new_urls:
                                 if not url: continue
                                 if normalize_url(url) not in existing_urls:
-                                    articles_to_add.append({
+                                    status_text.text(f"Processing {current_idx + 1}/{total_new}: {url}")
+                                    
+                                    new_art = {
                                         "url": url,
-                                        "article_title": "New from Sheet",
-                                        "status": "Not Started",
+                                        "article_title": "Processing...",
+                                        "status": "In Process",
                                         "source": "sheet",
                                         "added_at": datetime.now().isoformat()
-                                    })
+                                    }
+                                    
+                                    # Attempt Scrape & Analyze
+                                    try:
+                                        content, err = scrape_article(url)
+                                        if err:
+                                            new_art["last_error"] = f"Scrape Error: {err}"
+                                            new_art["article_title"] = "Scrape Failed"
+                                        else:
+                                            new_art["scraped_text"] = content["text"]
+                                            new_art["article_title"] = content["title"] or "New from Sheet"
+                                            
+                                            if api_key:
+                                                try:
+                                                    analysis = analyze_content(content["text"], new_art["article_title"], api_key)
+                                                    new_art.update(analysis)
+                                                    new_art["status"] = "Not Started"
+                                                except Exception as e:
+                                                    new_art["last_error"] = f"Analysis Error: {e}"
+                                            else:
+                                                new_art["last_error"] = "Analysis skipped: No API Key"
+                                    except Exception as e:
+                                        new_art["last_error"] = f"Unexpected Error: {e}"
+
+                                    articles_to_add.append(new_art)
                                     count += 1
+                                    current_idx += 1
+                                    if total_new > 0:
+                                        progress_bar.progress(current_idx / total_new)
+                            
+                            progress_bar.empty()
+                            status_text.empty()
                             
                             if articles_to_add:
                                 dm.save_articles(articles_to_add)
-                                st.success(f"Added {count} new articles!")
+                                st.success(f"Added and analyzed {count} new articles!")
                                 st.rerun()
         else:
             st.warning("⚠️ Sync Unavailable: Not connected to Google Sheet")
@@ -1060,6 +1135,8 @@ else:
                 
                 # Title
                 c2.write(a.get("article_title", "Untitled"))
+                if a.get("last_error"):
+                    c2.caption(f"⚠️ {a.get('last_error')}")
                 
                 # TLDR
                 tldr = a.get("tl_dr", "")
