@@ -523,6 +523,167 @@ with st.sidebar:
         else:
             st.warning("Credentials loaded, but 'client_email' field is missing.")
             st.json(creds_dict) # Debug help
+
+    # --- Connection Logic & Sync Button (Moved to Sidebar) ---
+    is_sheet_connected = False
+    if creds_dict and sheet_name:
+        try:
+            # Check if we need to authenticate or re-connect
+            if not dm.sm or not sm.client:
+                success, msg = sm.authenticate(creds_dict)
+                if success:
+                    # Try to set backend immediately
+                    try:
+                        # Don't reload (load=False) on auto-reconnect to preserve local state
+                        # unless the cache is empty
+                        should_load = (len(dm.articles_cache) == 0)
+                        dm.set_backend(sm, sheet_name, load=should_load)
+                        is_sheet_connected = True
+                        
+                        # --- One-Time Reset Logic ---
+                        if os.path.exists("reset_pending.txt"):
+                            try:
+                                dm.clear_all_articles()
+                                os.remove("reset_pending.txt")
+                                st.sidebar.success("✅ System Reset: All data wiped from Local and Remote.")
+                                st.rerun()
+                            except Exception as e:
+                                st.sidebar.error(f"Reset Failed: {e}")
+                        # ----------------------------
+                        
+                    except Exception as e:
+                        st.sidebar.error(f"DB Error: {e}")
+                else:
+                    st.sidebar.error(f"Sheet Auth Error: {msg}")
+            else:
+                 is_sheet_connected = True
+        except Exception as e:
+            st.sidebar.error(f"Credentials Error: {e}")
+
+    st.markdown("---")
+    st.subheader("Sync Status")
+    
+    if is_sheet_connected:
+        # Display current sheet name/URL for confirmation
+        st.caption(f"Connected to: {sheet_name[:30]}...")
+        if st.button("🔄 Sync with Google Sheet", help="Pull new URLs and refresh data"):
+            if not api_key:
+                st.error("⚠️ OpenAI API Key is missing! Cannot analyze new articles.")
+                st.info("Please enter your API Key in the sidebar settings.")
+            else:
+                with st.spinner("Syncing..."):
+                    # Reload DB to get latest changes (explicit sync)
+                    dm.set_backend(sm, sheet_name, load=True)
+                    
+                    articles = dm.get_all_articles()
+                    existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
+                    
+                    # Also exclude permanently deleted URLs
+                    prefs = dm.get_preferences()
+                    deleted_prefs = set(prefs.get("deleted_urls", []))
+                    for d_url in deleted_prefs:
+                        existing_urls.add(normalize_url(d_url))
+                    
+                    # Fetch new from Sheet
+                    new_items, err, stats = sm.get_new_urls(sheet_name, existing_urls)
+                    
+                    if err:
+                        st.error(err)
+                    else:
+                        msg = f"Found {stats['total_rows']} rows. {stats['valid_urls']} valid URLs. {stats['duplicates']} duplicates (marked in sheet)."
+                        if stats['total_rows'] == 0:
+                            st.warning(f"{msg} Is the sheet empty or data not in Column A?")
+                        elif stats['new'] > 0:
+                            st.success(f"{msg} Found {stats['new']} NEW to process.")
+                        else:
+                            st.info(f"{msg} No new URLs.")
+                        
+                        if new_items:
+                            articles_to_add = []
+                            count = 0
+                            
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            # Filter out any that are duplicates after normalization
+                            valid_items = []
+                            for item in new_items:
+                                if normalize_url(item['url']) in existing_urls:
+                                    # It's a duplicate we missed in the strict check
+                                    sm.update_status(sheet_name, item['row'], "Duplicate")
+                                else:
+                                    valid_items.append(item)
+                            
+                            total_new = len(valid_items)
+                            current_idx = 0
+                            
+                            for item in valid_items:
+                                url = item['url']
+                                row_num = item['row']
+                                
+                                status_text.text(f"Processing ({current_idx + 1}/{total_new}): {url}")
+                                
+                                # 1. Scrape
+                                content = None
+                                try:
+                                    # scrape_article is defined in app.py, so we call it directly
+                                    scraped_data, scrape_err = scrape_article(url)
+
+                                    new_art = {
+                                        "url": url,
+                                        "added_at": datetime.now().isoformat(),
+                                        "source": "google_sheet",
+                                        "scraped_text": "",
+                                        "article_title": "Processing...",
+                                        "status": "In Process"
+                                    }
+                                    
+                                    if scrape_err:
+                                        new_art["last_error"] = f"Scrape Error: {scrape_err}"
+                                        new_art["article_title"] = "Scrape Failed"
+                                        new_art["status"] = "Error"
+                                        sm.update_status(sheet_name, row_num, "Failed")
+                                    else:
+                                        new_art["scraped_text"] = scraped_data.get("text", "")
+                                        new_art["article_title"] = scraped_data.get("title") or "New from Sheet"
+                                        
+                                        # 2. Analyze
+                                        if api_key:
+                                            try:
+                                                analysis = analyze_content(new_art["scraped_text"], new_art["article_title"], api_key)
+                                                new_art.update(analysis)
+                                                new_art["status"] = "Not Started"
+                                                sm.update_status(sheet_name, row_num, "Processed")
+                                            except Exception as e:
+                                                new_art["last_error"] = f"Analysis Error: {e}"
+                                                sm.update_status(sheet_name, row_num, "Failed")
+                                        else:
+                                            new_art["last_error"] = "Analysis skipped: No API Key"
+                                            sm.update_status(sheet_name, row_num, "Skipped (No Key)")
+                                            
+                                    articles_to_add.append(new_art)
+                                    count += 1
+                                    current_idx += 1
+                                    if total_new > 0:
+                                        progress_bar.progress(current_idx / total_new)
+                                        
+                                except Exception as e:
+                                    print(f"Error processing {url}: {e}")
+                                    sm.update_status(sheet_name, row_num, "Failed")
+                                    current_idx += 1
+
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                            if articles_to_add:
+                                dm.save_articles(articles_to_add)
+                                st.success(f"Added and analyzed {count} new articles!")
+                                st.rerun()
+    else:
+        st.warning("⚠️ Sync Unavailable: Not connected")
+        with st.expander("Troubleshooter"):
+            st.write("Ensure Sheet Name is correct and Service Email has access.")
+
         
         # Authenticate Session if needed
         if not dm.sm or not sm.client:
@@ -774,176 +935,9 @@ elif st.session_state.get("is_global_summary"):
 else:
     # --- Dashboard ---
     
-    # Restore Connection Logic
-    is_sheet_connected = False
-    if creds_dict and sheet_name:
-        try:
-            # Check if we need to authenticate or re-connect
-            if not dm.sm or not sm.client:
-                success, msg = sm.authenticate(creds_dict)
-                if success:
-                    # Try to set backend immediately
-                    try:
-                        # Don't reload (load=False) on auto-reconnect to preserve local state
-                        # unless the cache is empty
-                        should_load = (len(dm.articles_cache) == 0)
-                        dm.set_backend(sm, sheet_name, load=should_load)
-                        is_sheet_connected = True
-                        
-                        # --- One-Time Reset Logic ---
-                        if os.path.exists("reset_pending.txt"):
-                            try:
-                                dm.clear_all_articles()
-                                os.remove("reset_pending.txt")
-                                st.sidebar.success("✅ System Reset: All data wiped from Local and Remote.")
-                                st.rerun()
-                            except Exception as e:
-                                st.sidebar.error(f"Reset Failed: {e}")
-                        # ----------------------------
-                        
-                    except Exception as e:
-                        st.sidebar.error(f"DB Error: {e}")
-                else:
-                    st.sidebar.error(f"Sheet Auth Error: {msg}")
-            else:
-                 is_sheet_connected = True
-        except Exception as e:
-            st.sidebar.error(f"Credentials Error: {e}")
 
-    col_title, col_sync = st.columns([2.5, 2])
-    with col_sync:
-        if is_sheet_connected:
-            # Display current sheet name/URL for confirmation
-            st.caption(f"Syncing with: {sheet_name[:30]}...")
-            if st.button("🔄 Sync with Google Sheet", help="Pull new URLs and refresh data"):
-                if not api_key:
-                    st.error("⚠️ OpenAI API Key is missing! Cannot analyze new articles.")
-                    st.info("Please enter your API Key in the sidebar settings.")
-                else:
-                    with st.spinner("Syncing..."):
-                        # Reload DB to get latest changes (explicit sync)
-                        dm.set_backend(sm, sheet_name, load=True)
-                        
-                        articles = dm.get_all_articles()
-                        existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
-                        
-                        # Also exclude permanently deleted URLs
-                        prefs = dm.get_preferences()
-                        deleted_prefs = set(prefs.get("deleted_urls", []))
-                        for d_url in deleted_prefs:
-                            existing_urls.add(normalize_url(d_url))
-                        
-                        # Fetch new from Sheet
-                        new_items, err, stats = sm.get_new_urls(sheet_name, existing_urls)
-                        
-                        if err:
-                            st.error(err)
-                        else:
-                            msg = f"Found {stats['total_rows']} rows. {stats['valid_urls']} valid URLs. {stats['duplicates']} duplicates (marked in sheet)."
-                            if stats['total_rows'] == 0:
-                                st.warning(f"{msg} Is the sheet empty or data not in Column A?")
-                            elif stats['new'] > 0:
-                                st.success(f"{msg} Found {stats['new']} NEW to process.")
-                            else:
-                                st.info(f"{msg} No new URLs.")
-                            
-                            if new_items:
-                                articles_to_add = []
-                                count = 0
-                                
-                                progress_bar = st.progress(0)
-                                status_text = st.empty()
-                                
-                                # Filter out any that are duplicates after normalization
-                                valid_items = []
-                                for item in new_items:
-                                    if normalize_url(item['url']) in existing_urls:
-                                        # It's a duplicate we missed in the strict check
-                                        sm.update_status(sheet_name, item['row'], "Duplicate")
-                                    else:
-                                        valid_items.append(item)
-                                
-                                total_new = len(valid_items)
-                                current_idx = 0
-                                
-                                for item in valid_items:
-                                    url = item['url']
-                                    row_num = item['row']
-                                    
-                                    status_text.text(f"Processing ({current_idx + 1}/{total_new}): {url}")
-                                    
-                                    # 1. Scrape
-                                    content = None
-                                    try:
-                                        # scrape_article is defined in app.py, so we call it directly
-                                        scraped_data, scrape_err = scrape_article(url)
 
-                                        new_art = {
-                                            "url": url,
-                                            "added_at": datetime.now().isoformat(),
-                                            "source": "google_sheet",
-                                            "scraped_text": "",
-                                            "article_title": "Processing...",
-                                            "status": "In Process"
-                                        }
-                                        
-                                        if scrape_err:
-                                            new_art["last_error"] = f"Scrape Error: {scrape_err}"
-                                            new_art["article_title"] = "Scrape Failed"
-                                            new_art["status"] = "Error"
-                                            sm.update_status(sheet_name, row_num, "Failed")
-                                        else:
-                                            new_art["scraped_text"] = scraped_data.get("text", "")
-                                            new_art["article_title"] = scraped_data.get("title") or "New from Sheet"
-                                            
-                                            # 2. Analyze
-                                            if api_key:
-                                                try:
-                                                    analysis = analyze_content(new_art["scraped_text"], new_art["article_title"], api_key)
-                                                    new_art.update(analysis)
-                                                    new_art["status"] = "Not Started"
-                                                    sm.update_status(sheet_name, row_num, "Processed")
-                                                except Exception as e:
-                                                    new_art["last_error"] = f"Analysis Error: {e}"
-                                                    sm.update_status(sheet_name, row_num, "Failed")
-                                            else:
-                                                new_art["last_error"] = "Analysis skipped: No API Key"
-                                                sm.update_status(sheet_name, row_num, "Skipped (No Key)")
 
-                                        articles_to_add.append(new_art)
-                                        count += 1
-                                        current_idx += 1
-                                        if total_new > 0:
-                                            progress_bar.progress(current_idx / total_new)
-                                            
-                                    except Exception as e:
-                                        print(f"Error processing {url}: {e}")
-                                        sm.update_status(sheet_name, row_num, "Failed")
-                                        current_idx += 1
-
-                                progress_bar.empty()
-                                status_text.empty()
-                                
-                                if articles_to_add:
-                                    dm.save_articles(articles_to_add)
-                                    st.success(f"Added and analyzed {count} new articles!")
-                                    st.rerun()
-        else:
-            st.warning("⚠️ Sync Unavailable: Not connected to Google Sheet")
-            
-            with st.expander("🔌 Connection Troubleshooter"):
-                st.write("To sync, you need to connect your Google Sheet.")
-                if creds_dict:
-                    st.success("✅ Credentials Found")
-                    e = creds_dict.get("client_email")
-                    if e:
-                         st.markdown(f"**Service Email:** `{e}`")
-                         st.info("Ensure the Google Sheet is shared with this email.")
-                else:
-                    st.error("❌ No Credentials Found")
-                
-                if not sheet_name:
-                    st.error("❌ No Sheet Name/URL configured")
 
     # --- Main Content ---
     
@@ -1212,13 +1206,12 @@ else:
             st.info("No articles found.")
 
     elif st.session_state["current_view"] == "details":
-        if st.button("← Back to Dashboard"):
-            st.session_state["current_view"] = "dashboard"
-            st.rerun()
-            
         # Logic for displaying details
         if not active_articles:
              st.info("No articles available.")
+             if st.button("Back to Dashboard"):
+                st.session_state["current_view"] = "dashboard"
+                st.rerun()
         else:
             # Find selected article
             selected_id = st.session_state.get("selected_article_id")
@@ -1234,25 +1227,6 @@ else:
                 article = current_article
                 sel_id = selected_id
                 
-                # Header
-                fi = article.get("fraud_indicator")
-                
-                # Editable Title
-                col_t1, col_t2 = st.columns([4, 1])
-                with col_t1:
-                     new_title = st.text_input("Article Title", value=article.get("article_title", "Untitled"), key=f"title_edit_{sel_id}", label_visibility="collapsed")
-                     if new_title != article.get("article_title"):
-                         dm.update_article(sel_id, {"article_title": new_title})
-                         st.rerun()
-                
-                with col_t2:
-                     # Display Fraud Indicator Badge next to title if exists
-                     if fi:
-                        fi_color = "red" if fi == "High" else "orange" if fi == "Medium" else "green"
-                        st.markdown(f"<div style='text-align:right; padding-top: 5px;'><span style='color:{fi_color}; font-size:1em; border:1px solid {fi_color}; padding:5px 10px; border-radius:5px;'>{fi.upper()}</span></div>", unsafe_allow_html=True)
-
-                st.caption(f"URL: {article.get('url')}")
-                
                 # --- Sticky Navigation & Actions Toolbar ---
                 st.markdown('<div id="sticky-marker"></div>', unsafe_allow_html=True)
                 with st.container():
@@ -1266,9 +1240,14 @@ else:
                     prev_id = active_ids[curr_idx - 1] if curr_idx > 0 else None
                     next_id = active_ids[curr_idx + 1] if curr_idx < len(active_ids) - 1 else None
 
-                    # Toolbar Layout: [Prev] [Next] [Analyze URL] [Analyze Text] [Delete] [Status]
-                    t1, t2, t3, t4, t5, t6 = st.columns([0.6, 0.6, 1.3, 1.3, 0.6, 2])
+                    # Toolbar Layout: [Back] [Prev] [Next] [Analyze URL] [Analyze Text] [Delete] [Status]
+                    t0, t1, t2, t3, t4, t5, t6 = st.columns([1.2, 0.6, 0.6, 1.3, 1.3, 0.6, 2])
                     
+                    with t0:
+                        if st.button("⬅️ Back", help="Back to Dashboard"):
+                            st.session_state["current_view"] = "dashboard"
+                            st.rerun()
+                            
                     with t1:
                         if st.button("⬅️", disabled=(prev_id is None), help="Previous Article"):
                             st.session_state["selected_article_id"] = prev_id
@@ -1315,6 +1294,26 @@ else:
                             st.rerun()
                     
                     st.divider()
+
+                # Header (Title & URL moved here)
+                fi = article.get("fraud_indicator")
+                
+                # Editable Title
+                col_t1, col_t2 = st.columns([4, 1])
+                with col_t1:
+                     new_title = st.text_input("Article Title", value=article.get("article_title", "Untitled"), key=f"title_edit_{sel_id}", label_visibility="collapsed")
+                     if new_title != article.get("article_title"):
+                         dm.update_article(sel_id, {"article_title": new_title})
+                         st.rerun()
+                
+                with col_t2:
+                     # Display Fraud Indicator Badge next to title if exists
+                     if fi:
+                        fi_color = "red" if fi == "High" else "orange" if fi == "Medium" else "green"
+                        st.markdown(f"<div style='text-align:right; padding-top: 5px;'><span style='color:{fi_color}; font-size:1em; border:1px solid {fi_color}; padding:5px 10px; border-radius:5px;'>{fi.upper()}</span></div>", unsafe_allow_html=True)
+
+                st.caption(f"URL: {article.get('url')}")
+                st.divider()
 
                 # --- Analysis Logic ---
                 do_analysis = False
@@ -1383,8 +1382,8 @@ else:
                     st.subheader("1. TL;DR")
                     tldr = article.get("tl_dr")
                     if isinstance(tldr, list):
-                        for point in tldr:
-                            st.markdown(f"- {point}")
+                        # Join with newlines for single spacing
+                        st.markdown("\n".join([f"- {point}" for point in tldr]))
                     else:
                         st.write(tldr)
 
