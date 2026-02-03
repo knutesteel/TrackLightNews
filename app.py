@@ -462,10 +462,20 @@ with st.sidebar:
             maybe_auto_check_email(email_user, email_pass, api_key, force=True)
 
     try:
-        from streamlit import st_autorefresh
+        from streamlit_autorefresh import st_autorefresh
         st_autorefresh(interval=60000, key="email_poll")
+    except ImportError:
+        try:
+            from streamlit import st_autorefresh
+            st_autorefresh(interval=60000, key="email_poll")
+        except Exception:
+            pass
     except Exception:
         pass
+
+    # Auto-check email if configured
+    if email_user and email_pass and api_key:
+        maybe_auto_check_email(email_user, email_pass, api_key, force=False)
 
     st.markdown("---")
     
