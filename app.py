@@ -523,6 +523,26 @@ with st.sidebar:
         else:
             st.warning("Credentials loaded, but 'client_email' field is missing.")
             st.json(creds_dict) # Debug help
+    else:
+        st.warning("⚠️ No Service Account Linked")
+        st.markdown("""
+        **How to connect:**
+        1. Paste your **Service Account JSON** below.
+        2. Click **Save Google Config**.
+        
+        **☁️ Hosting on Streamlit Cloud?**
+        Files are deleted when the app restarts. To save permanently:
+        1. Go to your App Dashboard > Settings > Secrets.
+        2. Paste your JSON like this:
+        ```toml
+        service_account_json = \"\"\"
+        {
+          "type": "service_account",
+          ... your json here ...
+        }
+        \"\"\"
+        ```
+        """)
 
     # --- Connection Logic & Sync Button (Moved to Sidebar) ---
     is_sheet_connected = False
@@ -715,26 +735,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-    else:
-        st.warning("⚠️ No Service Account Linked")
-        st.markdown("""
-        **How to connect:**
-        1. Paste your **Service Account JSON** below.
-        2. Click **Save Google Config**.
-        
-        **☁️ Hosting on Streamlit Cloud?**
-        Files are deleted when the app restarts. To save permanently:
-        1. Go to your App Dashboard > Settings > Secrets.
-        2. Paste your JSON like this:
-        ```toml
-        service_account_json = \"\"\"
-        {
-          "type": "service_account",
-          ... your json here ...
-        }
-        \"\"\"
-        ```
-        """)
+
 
     # Input Area (Show existing value if from file, else empty)
     input_val = ""
