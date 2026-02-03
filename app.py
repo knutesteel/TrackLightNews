@@ -454,6 +454,13 @@ with st.sidebar:
         st.success("Email settings saved!")
         st.rerun()
 
+    # Manual Check Button for Debugging
+    if st.button("🔄 Check Email Now"):
+        if not api_key:
+            st.error("⚠️ OpenAI API Key is missing! Cannot analyze new articles.")
+        else:
+            maybe_auto_check_email(email_user, email_pass, api_key, force=True)
+
     try:
         from streamlit import st_autorefresh
         st_autorefresh(interval=60000, key="email_poll")
