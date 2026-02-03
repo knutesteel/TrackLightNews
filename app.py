@@ -1326,6 +1326,16 @@ else:
                 st.caption(f"URL: {article.get('url')}")
                 st.divider()
 
+                # --- User Notes ---
+                st.markdown("**Notes**")
+                user_notes = st.text_area("Notes", value=article.get("user_notes", ""), height=150, key=f"notes_{sel_id}", label_visibility="collapsed", placeholder="Add your notes here...")
+                if user_notes != article.get("user_notes", ""):
+                    dm.update_article(sel_id, {"user_notes": user_notes})
+                    # Optional toast to confirm save, but might be noisy
+                    # st.toast("Notes saved")
+
+                st.divider()
+
                 # --- Analysis Logic ---
                 do_analysis = False
                 analysis_text = ""
