@@ -986,26 +986,30 @@ else:
             
             submitted = st.form_submit_button("Add and Analyze")
             if submitted:
+                # Clear previous duplicate warnings
+                if "last_duplicate_id" in st.session_state:
+                    del st.session_state["last_duplicate_id"]
+
                 # Deduplication Check
                 prefs = dm.get_preferences()
                 deleted_urls = set(u.strip().rstrip('/') for u in prefs.get("deleted_urls", []) if u)
                 
-                # Active URLs
-                active_urls = set()
+                # Active URLs Map
+                active_url_map = {}
                 for a in active_articles:
                     u = a.get("url", "")
                     if u:
-                        active_urls.add(u.strip().rstrip('/'))
+                        active_url_map[u.strip().rstrip('/')] = a
                 
                 norm_qa_url = qa_url.strip().rstrip('/') if qa_url else ""
                 
                 if norm_qa_url:
                     if norm_qa_url in deleted_urls:
                          st.error("⚠️ This URL was previously deleted and is blacklisted.")
-                         # Allow user to force add? Maybe not for now.
-                         # st.stop() will stop execution here
-                    elif norm_qa_url in active_urls:
-                         st.warning("⚠️ This URL is already in the dashboard.")
+                    elif norm_qa_url in active_url_map:
+                         dup_article = active_url_map[norm_qa_url]
+                         st.warning(f"⚠️ This URL is already in the dashboard: {dup_article.get('article_title', 'Untitled')}")
+                         st.session_state["last_duplicate_id"] = dup_article["id"]
                     else:
                         # Proceed with adding
                         to_add = []
@@ -1129,6 +1133,22 @@ else:
                 else:
                     st.warning("Please enter a URL or Text.")
         
+        # Navigation to Duplicate
+        if st.session_state.get("last_duplicate_id"):
+            dup_id = st.session_state["last_duplicate_id"]
+            # Verify it still exists
+            dup_art = next((a for a in active_articles if a['id'] == dup_id), None)
+            if dup_art:
+                if st.button(f"👉 Go to Article: {dup_art.get('article_title', 'Untitled')}", type="primary"):
+                    st.session_state["selected_article_id"] = dup_id
+                    st.session_state["current_view"] = "details"
+                    del st.session_state["last_duplicate_id"]
+                    st.rerun()
+            else:
+                # Cleanup if invalid
+                del st.session_state["last_duplicate_id"]
+                st.rerun()
+
         # Search
         search = st.text_input("Search articles...", placeholder="Title, Summary, or URL", key="dashboard_search")
         
