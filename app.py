@@ -794,88 +794,88 @@ else:
                 else:
                     with st.spinner("Syncing..."):
                         # Reload DB to get latest changes (explicit sync)
-                    dm.set_backend(sm, sheet_name, load=True)
-                    
-                    articles = dm.get_all_articles()
-                    existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
-                    
-                    # Also exclude permanently deleted URLs
-                    prefs = dm.get_preferences()
-                    deleted_prefs = set(prefs.get("deleted_urls", []))
-                    for d_url in deleted_prefs:
-                        existing_urls.add(normalize_url(d_url))
-                    
-                    # Fetch new from Sheet
-                    new_urls, err, stats = sm.get_new_urls(sheet_name, existing_urls)
-                    
-                    if err:
-                        st.error(err)
-                    else:
-                        msg = f"Found {stats['total_rows']} rows. {stats['valid_urls']} valid URLs. {stats['duplicates']} duplicates."
-                        if stats['total_rows'] == 0:
-                            st.warning(f"{msg} Is the sheet empty or data not in Column A?")
-                        elif stats['new'] > 0:
-                            st.success(f"{msg} Found {stats['new']} NEW.")
+                        dm.set_backend(sm, sheet_name, load=True)
+                        
+                        articles = dm.get_all_articles()
+                        existing_urls = {normalize_url(a.get("url")) for a in articles if a.get("url")}
+                        
+                        # Also exclude permanently deleted URLs
+                        prefs = dm.get_preferences()
+                        deleted_prefs = set(prefs.get("deleted_urls", []))
+                        for d_url in deleted_prefs:
+                            existing_urls.add(normalize_url(d_url))
+                        
+                        # Fetch new from Sheet
+                        new_urls, err, stats = sm.get_new_urls(sheet_name, existing_urls)
+                        
+                        if err:
+                            st.error(err)
                         else:
-                            st.info(f"{msg} No new URLs.")
+                            msg = f"Found {stats['total_rows']} rows. {stats['valid_urls']} valid URLs. {stats['duplicates']} duplicates."
+                            if stats['total_rows'] == 0:
+                                st.warning(f"{msg} Is the sheet empty or data not in Column A?")
+                            elif stats['new'] > 0:
+                                st.success(f"{msg} Found {stats['new']} NEW.")
+                            else:
+                                st.info(f"{msg} No new URLs.")
                             
-                        if new_urls:
-                            articles_to_add = []
-                            count = 0
-                            
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
-                            total_new = len([u for u in new_urls if u and normalize_url(u) not in existing_urls])
-                            current_idx = 0
+                            if new_urls:
+                                articles_to_add = []
+                                count = 0
+                                
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+                                total_new = len([u for u in new_urls if u and normalize_url(u) not in existing_urls])
+                                current_idx = 0
 
-                            for url in new_urls:
-                                if not url: continue
-                                if normalize_url(url) not in existing_urls:
-                                    status_text.text(f"Processing {current_idx + 1}/{total_new}: {url}")
-                                    
-                                    new_art = {
-                                        "url": url,
-                                        "article_title": "Processing...",
-                                        "status": "In Process",
-                                        "source": "sheet",
-                                        "added_at": datetime.now().isoformat()
-                                    }
-                                    
-                                    # Attempt Scrape & Analyze
-                                    try:
-                                        content, err = scrape_article(url)
-                                        if err:
-                                            new_art["last_error"] = f"Scrape Error: {err}"
-                                            new_art["article_title"] = "Scrape Failed"
-                                        else:
-                                            new_art["scraped_text"] = content["text"]
-                                            new_art["article_title"] = content["title"] or "New from Sheet"
-                                            
-                                            if api_key:
-                                                try:
-                                                    analysis = analyze_content(content["text"], new_art["article_title"], api_key)
-                                                    new_art.update(analysis)
-                                                    new_art["status"] = "Not Started"
-                                                except Exception as e:
-                                                    new_art["last_error"] = f"Analysis Error: {e}"
+                                for url in new_urls:
+                                    if not url: continue
+                                    if normalize_url(url) not in existing_urls:
+                                        status_text.text(f"Processing {current_idx + 1}/{total_new}: {url}")
+                                        
+                                        new_art = {
+                                            "url": url,
+                                            "article_title": "Processing...",
+                                            "status": "In Process",
+                                            "source": "sheet",
+                                            "added_at": datetime.now().isoformat()
+                                        }
+                                        
+                                        # Attempt Scrape & Analyze
+                                        try:
+                                            content, err = scrape_article(url)
+                                            if err:
+                                                new_art["last_error"] = f"Scrape Error: {err}"
+                                                new_art["article_title"] = "Scrape Failed"
                                             else:
-                                                new_art["last_error"] = "Analysis skipped: No API Key"
-                                    except Exception as e:
-                                        new_art["last_error"] = f"Unexpected Error: {e}"
+                                                new_art["scraped_text"] = content["text"]
+                                                new_art["article_title"] = content["title"] or "New from Sheet"
+                                                
+                                                if api_key:
+                                                    try:
+                                                        analysis = analyze_content(content["text"], new_art["article_title"], api_key)
+                                                        new_art.update(analysis)
+                                                        new_art["status"] = "Not Started"
+                                                    except Exception as e:
+                                                        new_art["last_error"] = f"Analysis Error: {e}"
+                                                else:
+                                                    new_art["last_error"] = "Analysis skipped: No API Key"
+                                        except Exception as e:
+                                            new_art["last_error"] = f"Unexpected Error: {e}"
 
-                                    articles_to_add.append(new_art)
-                                    count += 1
-                                    current_idx += 1
-                                    if total_new > 0:
-                                        progress_bar.progress(current_idx / total_new)
-                            
-                            progress_bar.empty()
-                            status_text.empty()
-                            
-                            if articles_to_add:
-                                dm.save_articles(articles_to_add)
-                                st.success(f"Added and analyzed {count} new articles!")
-                                st.rerun()
+                                        articles_to_add.append(new_art)
+                                        count += 1
+                                        current_idx += 1
+                                        if total_new > 0:
+                                            progress_bar.progress(current_idx / total_new)
+                                
+                                progress_bar.empty()
+                                status_text.empty()
+                                
+                                if articles_to_add:
+                                    dm.save_articles(articles_to_add)
+                                    st.success(f"Added and analyzed {count} new articles!")
+                                    st.rerun()
         else:
             st.warning("⚠️ Sync Unavailable: Not connected to Google Sheet")
             
