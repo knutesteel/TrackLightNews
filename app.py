@@ -834,69 +834,93 @@ else:
                             existing_urls.add(normalize_url(d_url))
                         
                         # Fetch new from Sheet
-                        new_urls, err, stats = sm.get_new_urls(sheet_name, existing_urls)
+                        new_items, err, stats = sm.get_new_urls(sheet_name, existing_urls)
                         
                         if err:
                             st.error(err)
                         else:
-                            msg = f"Found {stats['total_rows']} rows. {stats['valid_urls']} valid URLs. {stats['duplicates']} duplicates."
+                            msg = f"Found {stats['total_rows']} rows. {stats['valid_urls']} valid URLs. {stats['duplicates']} duplicates (marked in sheet)."
                             if stats['total_rows'] == 0:
                                 st.warning(f"{msg} Is the sheet empty or data not in Column A?")
                             elif stats['new'] > 0:
-                                st.success(f"{msg} Found {stats['new']} NEW.")
+                                st.success(f"{msg} Found {stats['new']} NEW to process.")
                             else:
                                 st.info(f"{msg} No new URLs.")
                             
-                            if new_urls:
+                            if new_items:
                                 articles_to_add = []
                                 count = 0
                                 
                                 progress_bar = st.progress(0)
                                 status_text = st.empty()
-                                total_new = len([u for u in new_urls if u and normalize_url(u) not in existing_urls])
+                                
+                                # Filter out any that are duplicates after normalization
+                                valid_items = []
+                                for item in new_items:
+                                    if normalize_url(item['url']) in existing_urls:
+                                        # It's a duplicate we missed in the strict check
+                                        sm.update_status(sheet_name, item['row'], "Duplicate")
+                                    else:
+                                        valid_items.append(item)
+                                
+                                total_new = len(valid_items)
                                 current_idx = 0
+                                
+                                for item in valid_items:
+                                    url = item['url']
+                                    row_num = item['row']
+                                    
+                                    status_text.text(f"Processing ({current_idx + 1}/{total_new}): {url}")
+                                    
+                                    # 1. Scrape
+                                    content = None
+                                    try:
+                                        # scrape_article is defined in app.py, so we call it directly
+                                        scraped_data, scrape_err = scrape_article(url)
 
-                                for url in new_urls:
-                                    if not url: continue
-                                    if normalize_url(url) not in existing_urls:
-                                        status_text.text(f"Processing {current_idx + 1}/{total_new}: {url}")
-                                        
                                         new_art = {
                                             "url": url,
+                                            "added_at": datetime.now().isoformat(),
+                                            "source": "google_sheet",
+                                            "scraped_text": "",
                                             "article_title": "Processing...",
-                                            "status": "In Process",
-                                            "source": "sheet",
-                                            "added_at": datetime.now().isoformat()
+                                            "status": "In Process"
                                         }
                                         
-                                        # Attempt Scrape & Analyze
-                                        try:
-                                            content, err = scrape_article(url)
-                                            if err:
-                                                new_art["last_error"] = f"Scrape Error: {err}"
-                                                new_art["article_title"] = "Scrape Failed"
+                                        if scrape_err:
+                                            new_art["last_error"] = f"Scrape Error: {scrape_err}"
+                                            new_art["article_title"] = "Scrape Failed"
+                                            new_art["status"] = "Error"
+                                            sm.update_status(sheet_name, row_num, "Failed")
+                                        else:
+                                            new_art["scraped_text"] = scraped_data.get("text", "")
+                                            new_art["article_title"] = scraped_data.get("title") or "New from Sheet"
+                                            
+                                            # 2. Analyze
+                                            if api_key:
+                                                try:
+                                                    analysis = analyze_content(new_art["scraped_text"], new_art["article_title"], api_key)
+                                                    new_art.update(analysis)
+                                                    new_art["status"] = "Not Started"
+                                                    sm.update_status(sheet_name, row_num, "Processed")
+                                                except Exception as e:
+                                                    new_art["last_error"] = f"Analysis Error: {e}"
+                                                    sm.update_status(sheet_name, row_num, "Failed")
                                             else:
-                                                new_art["scraped_text"] = content["text"]
-                                                new_art["article_title"] = content["title"] or "New from Sheet"
-                                                
-                                                if api_key:
-                                                    try:
-                                                        analysis = analyze_content(content["text"], new_art["article_title"], api_key)
-                                                        new_art.update(analysis)
-                                                        new_art["status"] = "Not Started"
-                                                    except Exception as e:
-                                                        new_art["last_error"] = f"Analysis Error: {e}"
-                                                else:
-                                                    new_art["last_error"] = "Analysis skipped: No API Key"
-                                        except Exception as e:
-                                            new_art["last_error"] = f"Unexpected Error: {e}"
+                                                new_art["last_error"] = "Analysis skipped: No API Key"
+                                                sm.update_status(sheet_name, row_num, "Skipped (No Key)")
 
                                         articles_to_add.append(new_art)
                                         count += 1
                                         current_idx += 1
                                         if total_new > 0:
                                             progress_bar.progress(current_idx / total_new)
-                                
+                                            
+                                    except Exception as e:
+                                        print(f"Error processing {url}: {e}")
+                                        sm.update_status(sheet_name, row_num, "Failed")
+                                        current_idx += 1
+
                                 progress_bar.empty()
                                 status_text.empty()
                                 
@@ -1386,7 +1410,7 @@ else:
                                         
                                         # Buttons Row
                                         # Use columns for compact buttons
-                                        pb1, pb2, pb3 = st.columns([1.5, 2, 6])
+                                        pb1, pb2, pb3 = st.columns([1.5, 1.5, 1.5])
                                         with pb1:
                                             # LinkedIn Lookup
                                             li_url = f"https://www.linkedin.com/search/results/all/?keywords={urllib.parse.quote_plus(p_name)}"
@@ -1402,10 +1426,51 @@ else:
                                                     # Update the main article object in DB
                                                     dm.update_article(sel_id, {"organizations_involved": orgs})
                                                     st.rerun()
-                                        
+                                        with pb3:
+                                            # Draft Email
+                                            email_key = f"email_draft_{sel_id}_{idx_org}_{idx_p}"
+                                            if st.button("Draft Email", key=f"btn_email_{sel_id}_{idx_org}_{idx_p}"):
+                                                if not api_key:
+                                                    st.error("No API Key")
+                                                else:
+                                                    with st.spinner("Drafting..."):
+                                                        prompt = f"""
+                                                        Write a professional email to {p_name} ({p_role} at {name}).
+                                                        
+                                                        Context:
+                                                        - My company is TrackLight.ai (Fraud Prevention & Intelligence).
+                                                        - We noticed {name} was mentioned in an article: "{article.get('article_title')}".
+                                                        - Article Summary: {article.get('summary', 'Potential fraud/risk detected')}.
+                                                        
+                                                        Goal:
+                                                        - Introduce TrackLight.
+                                                        - Relate our services to the specific fraud/risks mentioned in the article.
+                                                        - Suggest a brief call to discuss how we can help protect {name}.
+                                                        
+                                                        Tone: Professional, concise, helpful.
+                                                        """
+                                                        try:
+                                                            client = openai.OpenAI(api_key=api_key)
+                                                            resp = client.chat.completions.create(
+                                                                model="gpt-4o",
+                                                                messages=[{"role": "user", "content": prompt}]
+                                                            )
+                                                            st.session_state[email_key] = resp.choices[0].message.content
+                                                        except Exception as e:
+                                                            st.error(f"Failed: {e}")
+
                                         # Display Details if available
                                         if person.get("details"):
                                             st.info(f"**Details on {p_name}:** {person.get('details')}")
+                                            
+                                        # Display Email Draft if available
+                                        if st.session_state.get(f"email_draft_{sel_id}_{idx_org}_{idx_p}"):
+                                            st.markdown("##### Draft Email")
+                                            st.text_area(f"Email to {p_name}", value=st.session_state[f"email_draft_{sel_id}_{idx_org}_{idx_p}"], height=250, key=f"txt_email_{sel_id}_{idx_org}_{idx_p}")
+                                            if st.button("Close Draft", key=f"close_email_{sel_id}_{idx_org}_{idx_p}"):
+                                                del st.session_state[f"email_draft_{sel_id}_{idx_org}_{idx_p}"]
+                                                st.rerun()
+
 
                             elif isinstance(org, str):
                                 st.markdown(f"- {org}")

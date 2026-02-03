@@ -26,9 +26,12 @@ class SheetManager:
             
     def get_new_urls(self, sheet_identifier, existing_urls):
         """
-        Fetch URLs from the first column of the sheet that are not in existing_urls.
-        Assumes URLs are in Column A.
-        Returns (new_urls, error_msg, stats_dict).
+        Fetch URLs from the sheet (Column A) that have NO status in Column B.
+        - If URL is already in existing_urls, mark Column B as "Duplicate".
+        - If URL is new, return it for processing.
+        
+        Returns (new_items, error_msg, stats_dict).
+        new_items is a list of dicts: {'url': url, 'row': row_number}
         """
         stats = {"total_rows": 0, "valid_urls": 0, "duplicates": 0, "new": 0}
         
@@ -38,7 +41,7 @@ class SheetManager:
         sheet_identifier = sheet_identifier.strip()
         
         try:
-            # Try to open the sheet by key (ID) first, then by name
+            # Open Sheet
             try:
                 if "docs.google.com" in sheet_identifier:
                      sheet = self.client.open_by_url(sheet_identifier).sheet1
@@ -47,34 +50,84 @@ class SheetManager:
                          sheet = self.client.open_by_key(sheet_identifier).sheet1
                     except gspread.exceptions.APIError:
                         sheet = self.client.open(sheet_identifier).sheet1
-                        
             except gspread.exceptions.SpreadsheetNotFound:
                 email_msg = f" Ensure it is shared with: {self.service_email}" if hasattr(self, 'service_email') else ""
                 return [], f"Spreadsheet '{sheet_identifier}' not found. Please check the Name/ID/URL.{email_msg}", stats
             except gspread.exceptions.APIError as e:
                 return [], f"Google API Error: {e.response.text if hasattr(e, 'response') else str(e)}", stats
+
+            # Get all values (to check Column B)
+            rows = sheet.get_all_values()
+            stats["total_rows"] = len(rows)
+            
+            new_items = []
+            updates = [] # For batch updating duplicates
+            
+            # Iterate rows (1-based index for gspread)
+            for idx, row in enumerate(rows):
+                row_num = idx + 1
                 
-            # Get all values from column A
-            urls = sheet.col_values(1)
-            stats["total_rows"] = len(urls)
-            
-            # Filter out headers if "http" is not in the string or it's empty
-            valid_urls = [url.strip() for url in urls if url.strip().startswith("http")]
-            stats["valid_urls"] = len(valid_urls)
-            
-            # Find new ones
-            new_urls = []
-            for url in valid_urls:
-                if url not in existing_urls:
-                    new_urls.append(url)
-                else:
+                # Get URL (Col A) and Status (Col B)
+                url = row[0].strip() if len(row) > 0 else ""
+                status = row[1].strip() if len(row) > 1 else ""
+                
+                # Skip invalid URLs (headers or empty)
+                if not url.startswith("http"):
+                    continue
+                
+                stats["valid_urls"] += 1
+                
+                # Logic:
+                # 1. If Status is NOT empty, skip (already processed/failed/duplicate)
+                if status:
+                    continue
+                
+                # 2. If Status is empty, check if it's a known URL
+                if url in existing_urls:
+                    # Mark as Duplicate
                     stats["duplicates"] += 1
-            
-            stats["new"] = len(new_urls)
-            
-            return new_urls, None, stats
+                    # We'll batch update these
+                    updates.append({
+                        'range': f'B{row_num}',
+                        'values': [['Duplicate']]
+                    })
+                else:
+                    # It's a new, unprocessed URL
+                    new_items.append({'url': url, 'row': row_num})
+
+            # Batch update duplicates if any
+            if updates:
+                try:
+                    sheet.batch_update(updates)
+                except Exception as e:
+                    print(f"Failed to batch update duplicates: {e}")
+
+            stats["new"] = len(new_items)
+            return new_items, None, stats
+
         except Exception as e:
             return [], f"Error accessing sheet: {str(e)}", stats
+
+    def update_status(self, sheet_identifier, row_num, status):
+        """
+        Updates Column B for a specific row with the given status.
+        """
+        if not self.client:
+            return
+        
+        try:
+            # Re-open sheet (or cache it if performance is an issue, but this is safer)
+            if "docs.google.com" in sheet_identifier:
+                 sheet = self.client.open_by_url(sheet_identifier).sheet1
+            else:
+                try:
+                     sheet = self.client.open_by_key(sheet_identifier).sheet1
+                except:
+                    sheet = self.client.open(sheet_identifier).sheet1
+            
+            sheet.update_cell(row_num, 2, status)
+        except Exception as e:
+            print(f"Error updating status for row {row_num}: {e}")
 
     def get_urls(self, sheet_identifier):
         """
