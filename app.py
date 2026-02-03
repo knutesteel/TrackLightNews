@@ -635,6 +635,27 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
+    with st.expander("⚠️ Danger Zone"):
+        st.warning("This will delete ALL articles locally and remotely, AND clear the blacklist. This cannot be undone.")
+        confirm_wipe = st.checkbox("I confirm I want to wipe EVERYTHING.")
+        if st.button("🔥 WIPE ALL DATA", disabled=not confirm_wipe):
+            try:
+                # 1. Clear Articles (Local + Remote)
+                dm.clear_all_articles()
+                
+                # 2. Clear Blacklist
+                prefs = dm.get_preferences()
+                prefs["deleted_urls"] = []
+                dm.save_preferences(prefs)
+                
+                st.success("✅ System Wiped Successfully.")
+                import time
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Wipe Failed: {e}")
+
+    st.markdown("---")
     st.subheader("Tools")
     
 
