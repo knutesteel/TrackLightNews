@@ -1266,16 +1266,15 @@ else:
                 st.markdown("---")
 
             # Bottom Pagination Buttons
+            def set_page(new_page):
+                st.session_state["dashboard_page"] = new_page
+
             if total_pages > 1:
                 b_c1, b_c2, b_c3 = st.columns([1, 1, 6])
                 with b_c1:
-                    if st.button("⬅️ Previous", disabled=(current_page <= 1)):
-                        st.session_state["dashboard_page"] -= 1
-                        st.rerun()
+                    st.button("⬅️ Previous", disabled=(current_page <= 1), on_click=set_page, args=(current_page - 1,))
                 with b_c2:
-                    if st.button("Next ➡️", disabled=(current_page >= total_pages)):
-                        st.session_state["dashboard_page"] += 1
-                        st.rerun()
+                    st.button("Next ➡️", disabled=(current_page >= total_pages), on_click=set_page, args=(current_page + 1,))
         else:
             st.info("No articles found.")
 
