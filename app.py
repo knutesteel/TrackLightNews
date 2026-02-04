@@ -1161,33 +1161,67 @@ else:
             
         # --- Custom List View with Buttons ---
         if filtered:
-            # Pagination
+            # Pagination Logic
             items_per_page = 20
             total_pages = max(1, (len(filtered) - 1) // items_per_page + 1)
             
-            # Only show pagination controls if needed
-            if total_pages > 1:
-                col_p1, col_p2 = st.columns([1, 4])
-                with col_p1:
-                    current_page = st.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1)
-            else:
-                current_page = 1
+            if "dashboard_page" not in st.session_state:
+                st.session_state["dashboard_page"] = 1
             
+            # Boundary check
+            if st.session_state["dashboard_page"] > total_pages:
+                 st.session_state["dashboard_page"] = total_pages
+            
+            # Top Controls: Page Number & Delete Selected
+            try:
+                col_p1, col_p2, col_p3 = st.columns([1, 2, 4], vertical_alignment="bottom")
+            except TypeError:
+                # Fallback for older streamlit versions
+                col_p1, col_p2, col_p3 = st.columns([1, 2, 4])
+
+            with col_p1:
+                 st.number_input("Page", min_value=1, max_value=total_pages, step=1, key="dashboard_page")
+            
+            with col_p2:
+                 if st.button("🗑️ Delete Selected", type="primary"):
+                     selected_ids = []
+                     keys_to_delete = []
+                     # Check all session state keys for selections
+                     for key in list(st.session_state.keys()):
+                         if key.startswith("select_") and st.session_state[key]:
+                             a_id = key.replace("select_", "")
+                             selected_ids.append(a_id)
+                             keys_to_delete.append(key)
+                     
+                     if selected_ids:
+                         count = 0
+                         for aid in selected_ids:
+                             dm.purge_article(aid)
+                             count += 1
+                         st.success(f"Deleted {count} articles.")
+                         # Cleanup state
+                         for k in keys_to_delete:
+                             del st.session_state[k]
+                         st.rerun()
+                     else:
+                         st.warning("No articles selected.")
+
+            current_page = st.session_state["dashboard_page"]
             start_idx = (current_page - 1) * items_per_page
             end_idx = start_idx + items_per_page
             page_items = filtered[start_idx:end_idx]
             
             # Header
-            c1, c2, c3, c4, c5 = st.columns([1.5, 3, 4, 0.7, 0.7])
+            c1, c2, c3, c4, c5 = st.columns([1.5, 3, 4, 0.7, 0.5])
             c1.markdown("**Status**")
             c2.markdown("**Title**")
             c3.markdown("**TL;DR**")
             c4.markdown("**Read**")
-            c5.markdown("**Del**")
+            c5.markdown("**Sel**")
             st.divider()
             
             for a in page_items:
-                c1, c2, c3, c4, c5 = st.columns([1.5, 3, 4, 0.7, 0.7])
+                c1, c2, c3, c4, c5 = st.columns([1.5, 3, 4, 0.7, 0.5])
                 
                 # Status
                 current_status = a.get("status", "Not Started")
@@ -1226,13 +1260,22 @@ else:
                     st.session_state["current_view"] = "details"
                     st.rerun()
                     
-                # Delete Button
-                if c5.button("🗑️", key=f"del_{a['id']}", help="Permanently Delete and Blacklist URL"):
-                    dm.purge_article(a['id'])
-                    st.toast("Article deleted and blacklisted")
-                    st.rerun()
+                # Selection Checkbox
+                c5.checkbox("", key=f"select_{a['id']}")
                     
                 st.markdown("---")
+
+            # Bottom Pagination Buttons
+            if total_pages > 1:
+                b_c1, b_c2, b_c3 = st.columns([1, 1, 6])
+                with b_c1:
+                    if st.button("⬅️ Previous", disabled=(current_page <= 1)):
+                        st.session_state["dashboard_page"] -= 1
+                        st.rerun()
+                with b_c2:
+                    if st.button("Next ➡️", disabled=(current_page >= total_pages)):
+                        st.session_state["dashboard_page"] += 1
+                        st.rerun()
         else:
             st.info("No articles found.")
 
